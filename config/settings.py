@@ -1,15 +1,23 @@
 """
-统一配置文件（示例）
-复制此文件为 settings.py 并填入实际配置
+统一配置文件
+从 .env 文件读取敏感信息
 """
+
+import os
+from pathlib import Path
+from dotenv import load_dotenv
+
+# 加载 .env 文件
+env_path = Path(__file__).parent.parent / ".env"
+load_dotenv(env_path)
 
 # ============== 邮箱配置 ==============
 
 EMAIL_ACCOUNTS = [
     {
         "name": "QQ邮箱",
-        "address": "your_email@qq.com",
-        "password": "your_app_password",  # QQ邮箱授权码
+        "address": os.getenv("QQ_EMAIL_ADDRESS", ""),
+        "password": os.getenv("QQ_EMAIL_PASSWORD", ""),
         "imap_host": "imap.qq.com",
         "imap_port": 993,
         "smtp_host": "smtp.qq.com",
@@ -17,8 +25,8 @@ EMAIL_ACCOUNTS = [
     },
     {
         "name": "PKU邮箱",
-        "address": "your_email@pku.edu.cn",
-        "password": "your_password",
+        "address": os.getenv("PKU_EMAIL_ADDRESS", ""),
+        "password": os.getenv("PKU_EMAIL_PASSWORD", ""),
         "imap_host": "mail.pku.edu.cn",
         "imap_port": 993,
         "smtp_host": "mail.pku.edu.cn",
@@ -32,22 +40,27 @@ DEFAULT_SEND_ACCOUNT = "QQ邮箱"
 # 邮件签名
 EMAIL_SIGNATURE = """
 --
-Your Name
-Your Title
-Your Organization
+[NAME_REMOVED]
+[TITLE_REMOVED]
+[ORG_REMOVED]
+[ORG_EN_REMOVED]
+地址 Address: [ADDR_REMOVED]
+[ADDR_EN_REMOVED]
+手机 Mobile: [PHONE_REMOVED]
+邮箱 Email: [EMAIL_REMOVED]
 """
 
 # ============== Kimi API 配置 ==============
 
 KIMI_API_URL = "https://api.moonshot.cn/v1/chat/completions"
-KIMI_API_KEY = "your_kimi_api_key"
+KIMI_API_KEY = os.getenv("KIMI_API_KEY", "")
 KIMI_MODEL = "kimi-k2.5"
 KIMI_TIMEOUT = 120  # 秒
 
 # ============== Notion 配置 ==============
 
 NOTION_API_URL = "https://api.notion.com/v1"
-NOTION_TOKEN = "your_notion_token"
+NOTION_TOKEN = os.getenv("NOTION_TOKEN", "")
 NOTION_VERSION = "2022-06-28"
 
 # 数据库名称
@@ -57,7 +70,7 @@ NOTION_DB_EMAILS = "📬 邮件整理"
 NOTION_DB_BILLING = "💳 账单管理"
 
 # 父页面（所有数据库都放在这个页面下）
-NOTION_PARENT_PAGE_ID = "your_notion_page_id"
+NOTION_PARENT_PAGE_ID = os.getenv("NOTION_PARENT_PAGE_ID", "")
 
 # ============== 定时任务配置 ==============
 

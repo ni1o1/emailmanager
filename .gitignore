@@ -21,7 +21,7 @@ pip-delete-this-directory.txt
 # Environment and secrets
 .env
 *.env
-config/settings.py
+!.env.example
 
 # Database
 *.db
