@@ -67,7 +67,8 @@ class EmailWatcher:
         trash_emails = []
         academic_emails = []
         billing_emails = []
-        important_emails = []
+        notice_emails = []
+        personal_emails = []
         unknown_emails = []
 
         for email in new_emails:
@@ -78,18 +79,21 @@ class EmailWatcher:
                 academic_emails.append(email)
             elif category == "BILLING":
                 billing_emails.append(email)
-            elif category == "IMPORTANT":
-                important_emails.append(email)
+            elif category in ["NOTICE", "IMPORTANT"]:
+                notice_emails.append(email)
+            elif category == "PERSONAL":
+                personal_emails.append(email)
             else:
                 unknown_emails.append(email)
 
         print(f"   垃圾邮件: {len(trash_emails)} 封")
         print(f"   学术邮件: {len(academic_emails)} 封")
         print(f"   账单邮件: {len(billing_emails)} 封")
-        print(f"   重要邮件: {len(important_emails)} 封")
+        print(f"   通知公告: {len(notice_emails)} 封")
+        print(f"   个人邮件: {len(personal_emails)} 封")
         print(f"   待分析: {len(unknown_emails)} 封")
 
-        # 记录垃圾邮件
+        # 记录垃圾邮件（不同步到Notion）
         for email in trash_emails:
             self.state.mark_processed(
                 message_id=email.get("message_id"),
@@ -120,7 +124,7 @@ class EmailWatcher:
 
             # 统计分类结果
             class_map = {c["id"]: c["category"] for c in classifications}
-            trash_count = sum(1 for c in classifications if c["category"] in ["Spam", "Academic/Trash"])
+            trash_count = sum(1 for c in classifications if "Trash" in c.get("category", ""))
             if trash_count:
                 print(f"   LLM判定垃圾: {trash_count} 封")
 
@@ -143,7 +147,7 @@ class EmailWatcher:
                         break
 
                 # 同步重要邮件到邮件整理
-                is_important = final_category in ["Paper/InProgress", "Review/Active", "Action/Important"]
+                is_important = final_category in ["Paper/InProgress", "Review/Active", "Action/Important", "Notice/School", "Notice/Exam"]
                 if is_important or item_category in ["Paper/InProgress", "Review/Active"]:
                     if self.notion.sync_email(email, "学术"):
                         synced_to_emails_db += 1
@@ -190,17 +194,33 @@ class EmailWatcher:
                 )
                 self.email_client.mark_as_read(email["account"], email["email_id"])
 
-        # 6. 处理重要邮件
-        for email in important_emails:
+        # 6. 处理通知公告邮件
+        for email in notice_emails:
             self.email_client.load_email_body(email)
-            if self.notion.sync_email(email, "其他"):
+            if self.notion.sync_email(email, "通知"):
                 synced_to_emails_db += 1
 
             self.state.mark_processed(
                 message_id=email.get("message_id"),
                 account=email.get("account"),
                 subject=email.get("subject"),
-                stage1_result="IMPORTANT",
+                stage1_result="NOTICE",
+                synced=True,
+                marked_read=True
+            )
+            self.email_client.mark_as_read(email["account"], email["email_id"])
+
+        # 7. 处理个人邮件
+        for email in personal_emails:
+            self.email_client.load_email_body(email)
+            if self.notion.sync_email(email, "个人"):
+                synced_to_emails_db += 1
+
+            self.state.mark_processed(
+                message_id=email.get("message_id"),
+                account=email.get("account"),
+                subject=email.get("subject"),
+                stage1_result="PERSONAL",
                 synced=True,
                 marked_read=True
             )
@@ -219,7 +239,8 @@ class EmailWatcher:
             "trash": len(trash_emails),
             "academic": len(academic_emails),
             "billing": len(billing_emails),
-            "important": len(important_emails),
+            "notice": len(notice_emails),
+            "personal": len(personal_emails),
             "unknown": len(unknown_emails),
         }
 

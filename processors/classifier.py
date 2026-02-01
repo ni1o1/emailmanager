@@ -17,12 +17,16 @@ from config.settings import KIMI_API_URL, KIMI_API_KEY, KIMI_MODEL, KIMI_TIMEOUT
 class EmailClassifier:
     """两阶段LLM邮件分类器"""
 
-    # 分类结果
+    # Stage 1 分类结果
     CATEGORY_TRASH = "TRASH"           # 垃圾邮件
     CATEGORY_ACADEMIC = "ACADEMIC"     # 学术相关（论文/审稿）
     CATEGORY_BILLING = "BILLING"       # 账单相关
-    CATEGORY_IMPORTANT = "IMPORTANT"   # 重要邮件（学校通知等）
+    CATEGORY_NOTICE = "NOTICE"         # 通知公告（学校/单位/考试）
+    CATEGORY_PERSONAL = "PERSONAL"     # 个人邮件（同事/朋友）
     CATEGORY_UNKNOWN = "UNKNOWN"       # 需要进一步分析内容
+
+    # 向后兼容
+    CATEGORY_IMPORTANT = "NOTICE"
 
     def __init__(self):
         self.session = requests.Session()
@@ -57,7 +61,7 @@ class EmailClassifier:
         result = response.json()
         return result["choices"][0]["message"]["content"]
 
-    def stage1_classify_batch(self, emails: List[Dict], batch_size: int = 20) -> List[Dict]:
+    def stage1_classify_batch(self, emails: List[Dict], batch_size: int = 15) -> List[Dict]:
         """
         Stage 1: 批量分析邮件标题，判断分类
 
@@ -66,7 +70,7 @@ class EmailClassifier:
 
         Args:
             emails: 邮件列表（只需subject和from）
-            batch_size: 每批处理的邮件数量
+            batch_size: 每批处理的邮件数量（默认15封，减少超时）
 
         Returns:
             带分类结果的邮件列表
@@ -99,29 +103,46 @@ class EmailClassifier:
 
         system_prompt = """你是一个邮件分类专家。根据邮件标题和发件人快速判断邮件类型。
 
-【分类选项】
-1. TRASH - 垃圾邮件：
-   - 会议征稿、期刊投稿邀请、编辑邀请
-   - 营销推广、折扣优惠、产品宣传
-   - 引用提醒、重印本邀请、隐私政策更新
-   - 系统通知（隔离区、密码重置等）
+【分类选项 - 必须严格使用以下分类名称】
 
-2. ACADEMIC - 学术相关：
-   - 论文投稿状态（提交、审稿中、修改、接收、拒稿）
-   - 审稿邀请、审稿提醒
-   - 稿件校对、proof
+1. TRASH - 垃圾/无需关注的邮件：
+   - 会议征稿(CFP)、期刊投稿邀请、编辑邀请、特刊征稿
+   - 营销推广、折扣优惠、产品宣传、广告
+   - 引用提醒(citation alert)、重印本邀请、版权转让
+   - 系统通知：隔离区通知、密码重置、登录验证、GitHub通知
+   - 航空/酒店会员营销、积分通知
+   - Newsletter、订阅内容推送
+
+2. ACADEMIC - 学术相关（需要关注）：
+   - 论文投稿状态：提交确认、审稿中、修改要求、接收、拒稿
+   - 审稿任务：审稿邀请、审稿提醒、截止日期提醒
+   - 稿件校对(proof)、作者查询(author query)
+   - 学术会议注册确认（不是征稿邀请）
 
 3. BILLING - 账单相关：
-   - 信用卡账单、还款提醒
-   - 会员订阅、续费通知
-   - 发票、payment
+   - 信用卡账单、对账单、还款提醒
+   - 会员订阅费用、续费通知
+   - 发票、付款确认
 
-4. IMPORTANT - 重要邮件：
-   - 学校/单位通知（关于...的通知）
-   - 准考证、成绩、注册
-   - 工作相关的重要沟通
+4. NOTICE - 通知公告（需要了解）：
+   - 学校/单位官方通知："关于...的通知"
+   - 考试相关：准考证、成绩通知、报名确认
+   - IT服务通知：网络维护、系统升级
+   - 行政事务：人事、财务、后勤通知
 
-5. UNKNOWN - 无法从标题判断，需要看内容
+5. PERSONAL - 个人邮件：
+   - 同事、朋友、合作者的直接邮件
+   - 非模板化的个人沟通
+   - 测试邮件
+
+6. UNKNOWN - 无法从标题判断，需要看内容
+
+【重要判断规则】
+- 发件人含 noreply、newsletter、marketing → 大概率 TRASH
+- 标题含 "call for"、"invitation to submit"、"special issue" → TRASH
+- 标题含 "manuscript"、"revision"、"decision"、"proof" → ACADEMIC
+- 标题含 "关于...的通知"、"Notice" 且来自edu.cn → NOTICE
+- 标题含 "账单"、"statement"、"billing" → BILLING
 
 【输出格式】
 返回JSON数组，每个元素包含邮件编号和分类：
@@ -145,6 +166,10 @@ class EmailClassifier:
                 result_map = {r["id"]: r["category"] for r in results}
                 for i, email in enumerate(emails, 1):
                     category = result_map.get(i, self.CATEGORY_UNKNOWN)
+                    # 标准化分类名称
+                    category = category.upper()
+                    if category == "IMPORTANT":
+                        category = "NOTICE"
                     email["_stage1_category"] = category
 
         except Exception as e:
@@ -153,7 +178,7 @@ class EmailClassifier:
             for email in emails:
                 email["_stage1_category"] = self.CATEGORY_UNKNOWN
 
-    def stage2_analyze_content(self, emails: List[Dict], batch_size: int = 10) -> Dict:
+    def stage2_analyze_content(self, emails: List[Dict], batch_size: int = 8) -> Dict:
         """
         Stage 2: 分析邮件内容
 
@@ -163,7 +188,7 @@ class EmailClassifier:
 
         Args:
             emails: 需要分析的邮件列表（已加载body）
-            batch_size: 每批处理的邮件数量
+            batch_size: 每批处理的邮件数量（默认8封，减少超时）
 
         Returns:
             分析结果（合并所有批次）
@@ -219,15 +244,17 @@ class EmailClassifier:
 【任务】
 1. 确定每封邮件的最终分类
 2. 对学术邮件，提取论文/审稿详情
-3. 识别真正重要的邮件
+3. 识别真正需要关注的邮件
 
-【分类选项】
-- Paper/InProgress: 论文投稿流程中（提交、审稿中、修改、接收）
-- Review/Active: 需要完成的审稿任务
-- Action/Important: 需要回复的重要邮件
+【最终分类选项】
+- Paper/InProgress: 我的论文正在投稿流程中（提交、审稿中、修改、接收）
+- Review/Active: 我需要完成的审稿任务（有截止日期）
+- Review/Completed: 已完成的审稿（感谢信等）
+- Notice/School: 学校/单位通知
+- Notice/Exam: 考试相关（成绩、准考证）
 - Billing: 账单相关
-- Academic/Trash: 学术垃圾（引用提醒、重印本、已发表论文的后续）
-- Spam: 垃圾邮件"""
+- Personal: 个人邮件
+- Trash: 垃圾邮件（征稿、营销、引用提醒等）"""
 
         user_prompt = f"""请分析以下邮件内容：
 
@@ -306,3 +333,4 @@ EmailClassifier.STAGE1_TRASH = EmailClassifier.CATEGORY_TRASH
 EmailClassifier.STAGE1_ACADEMIC = EmailClassifier.CATEGORY_ACADEMIC
 EmailClassifier.STAGE1_BILLING = EmailClassifier.CATEGORY_BILLING
 EmailClassifier.STAGE1_UNKNOWN = EmailClassifier.CATEGORY_UNKNOWN
+EmailClassifier.CATEGORY_IMPORTANT = EmailClassifier.CATEGORY_NOTICE
