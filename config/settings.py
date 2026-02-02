@@ -75,8 +75,23 @@ NOTION_PARENT_PAGE_ID = os.getenv("NOTION_PARENT_PAGE_ID", "")
 # ============== 定时任务配置 ==============
 
 CHECK_INTERVAL = 600  # 10分钟检查一次
-MAX_EMAILS_PER_BATCH = 20  # 每批最多处理邮件数
+MAX_EMAILS_PER_BATCH = 100  # 每批最多处理邮件数
 
 # ============== 状态数据库 ==============
 
 STATE_DB_PATH = "state.db"
+
+# ============== iMessage 通知配置 ==============
+
+# 是否启用 iMessage 通知
+IMESSAGE_ENABLED = os.getenv("IMESSAGE_ENABLED", "false").lower() == "true"
+
+# iMessage 收件人（手机号或 Apple ID）
+# 格式：+86xxxxxxxxxxx 或 email@icloud.com
+IMESSAGE_RECIPIENT = os.getenv("IMESSAGE_RECIPIENT", "")
+
+# 通知级别：all（所有处理完成都通知）/ important（仅重要邮件）/ summary（仅摘要）
+IMESSAGE_NOTIFY_LEVEL = os.getenv("IMESSAGE_NOTIFY_LEVEL", "summary")
+
+# 静默时段（不发送通知）- 格式：HH:MM-HH:MM
+IMESSAGE_QUIET_HOURS = os.getenv("IMESSAGE_QUIET_HOURS", "23:00-07:00")

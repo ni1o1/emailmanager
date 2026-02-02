@@ -7,26 +7,80 @@ Stage 2: 如果标题无法判断，LLM分析邮件内容
 import re
 import json
 import requests
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional, Any
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from config.settings import KIMI_API_URL, KIMI_API_KEY, KIMI_MODEL, KIMI_TIMEOUT
+from config.categories import HIGH_PRIORITY_SENDERS, TRASH_SENDERS
+
+
+def extract_json_from_text(text: str, expect_array: bool = False) -> Optional[Any]:
+    """
+    从文本中提取 JSON，更健壮的实现
+
+    Args:
+        text: 包含 JSON 的文本
+        expect_array: 是否期望数组格式
+
+    Returns:
+        解析后的 JSON 对象，或 None
+    """
+    if not text:
+        return None
+
+    # 尝试直接解析（如果整个文本就是 JSON）
+    text = text.strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+
+    # 查找 markdown 代码块中的 JSON
+    code_block_pattern = r'```(?:json)?\s*([\s\S]*?)```'
+    code_blocks = re.findall(code_block_pattern, text)
+    for block in code_blocks:
+        try:
+            return json.loads(block.strip())
+        except json.JSONDecodeError:
+            continue
+
+    # 查找数组或对象
+    if expect_array:
+        # 查找最外层的数组
+        array_match = re.search(r'\[[\s\S]*\]', text)
+        if array_match:
+            try:
+                return json.loads(array_match.group())
+            except json.JSONDecodeError:
+                pass
+    else:
+        # 查找最外层的对象（处理嵌套情况）
+        # 找到第一个 { 和最后一个 }
+        first_brace = text.find('{')
+        last_brace = text.rfind('}')
+        if first_brace != -1 and last_brace > first_brace:
+            json_str = text[first_brace:last_brace + 1]
+            try:
+                return json.loads(json_str)
+            except json.JSONDecodeError:
+                pass
+
+    return None
 
 
 class EmailClassifier:
     """两阶段LLM邮件分类器"""
 
     # Stage 1 分类结果
-    CATEGORY_TRASH = "TRASH"           # 垃圾邮件
-    CATEGORY_ACADEMIC = "ACADEMIC"     # 学术相关（论文/审稿）
+    CATEGORY_TRASH = "TRASH"           # 垃圾邮件（不同步）
+    CATEGORY_PAPER = "PAPER"           # 我的论文投稿
+    CATEGORY_REVIEW = "REVIEW"         # 审稿任务
     CATEGORY_BILLING = "BILLING"       # 账单相关
-    CATEGORY_NOTICE = "NOTICE"         # 通知公告（学校/单位/考试）
-    CATEGORY_PERSONAL = "PERSONAL"     # 个人邮件（同事/朋友）
-    CATEGORY_UNKNOWN = "UNKNOWN"       # 需要进一步分析内容
-
-    # 向后兼容
-    CATEGORY_IMPORTANT = "NOTICE"
+    CATEGORY_NOTICE = "NOTICE"         # 通知公告
+    CATEGORY_EXAM = "EXAM"             # 考试相关
+    CATEGORY_PERSONAL = "PERSONAL"     # 个人邮件
+    CATEGORY_UNKNOWN = "UNKNOWN"       # 需要进一步分析
 
     def __init__(self):
         self.session = requests.Session()
@@ -47,7 +101,7 @@ class EmailClassifier:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            "temperature": 1  # kimi-k2.5 只支持 temperature=1
+            "temperature": 1
         }
 
         response = self.session.post(
@@ -61,94 +115,152 @@ class EmailClassifier:
         result = response.json()
         return result["choices"][0]["message"]["content"]
 
-    def stage1_classify_batch(self, emails: List[Dict], batch_size: int = 15) -> List[Dict]:
-        """
-        Stage 1: 批量分析邮件标题，判断分类
-
-        用LLM分析邮件的标题和发件人，快速判断分类。
-        为避免超时，分批处理。
-
-        Args:
-            emails: 邮件列表（只需subject和from）
-            batch_size: 每批处理的邮件数量（默认15封，减少超时）
-
-        Returns:
-            带分类结果的邮件列表
-        """
+    def stage1_classify_batch(self, emails: List[Dict], batch_size: int = 10) -> List[Dict]:
+        """Stage 1: 批量分析邮件标题"""
         if not emails:
             return []
 
-        # 分批处理
         total = len(emails)
         for batch_start in range(0, total, batch_size):
             batch_end = min(batch_start + batch_size, total)
             batch = emails[batch_start:batch_end]
             print(f"   📧 Stage 1: 处理 {batch_start+1}-{batch_end}/{total} 封邮件...")
-
-            self._classify_batch_internal(batch, batch_start)
+            self._classify_batch_internal(batch)
 
         return emails
 
-    def _classify_batch_internal(self, emails: List[Dict], offset: int = 0) -> None:
+    def _check_sender_priority(self, email: Dict) -> tuple:
+        """检查发件人优先级，返回 (category, importance) 或 (None, None)"""
+        from_addr = (email.get("from", "") or "").lower()
+        subject = (email.get("subject", "") or "").lower()
+
+        # 1. 检查高优先级发件人（白名单）
+        for sender, info in HIGH_PRIORITY_SENDERS.items():
+            if sender.lower() in from_addr:
+                return info["category"], info["importance"]
+
+        # 2. 检查垃圾发件人（黑名单）
+        for sender in TRASH_SENDERS:
+            if sender.lower() in from_addr:
+                return self.CATEGORY_TRASH, 1
+
+        # 3. 特殊标题规则
+        # 考试相关关键词优先于其他分类
+        exam_keywords = ["ielts", "雅思", "托福", "toefl", "gre", "准考证", "成绩", "score"]
+        if any(kw in subject or kw in from_addr for kw in exam_keywords):
+            return self.CATEGORY_EXAM, 5
+
+        # 已发表论文的广告
+        if any(kw in subject for kw in ["reprint", "order copies", "citation alert", "nearing publication"]):
+            return self.CATEGORY_TRASH, 1
+
+        return None, None
+
+    def _classify_batch_internal(self, emails: List[Dict]) -> None:
         """内部方法：对一批邮件进行LLM分类"""
         if not emails:
             return
 
-        # 准备邮件摘要（只有标题和发件人）
+        # 先用规则引擎预分类
+        needs_llm = []
+        for email in emails:
+            category, importance = self._check_sender_priority(email)
+            if category:
+                email["_stage1_category"] = category
+                email["_importance"] = importance
+            else:
+                needs_llm.append(email)
+
+        # 如果所有邮件都已经被规则分类，直接返回
+        if not needs_llm:
+            return
+
         email_list = []
-        for i, mail in enumerate(emails, 1):
+        email_idx_map = {}  # 记录 LLM 列表序号到原始邮件的映射
+        for i, mail in enumerate(needs_llm, 1):
             email_list.append(f"{i}. 标题: {mail.get('subject', '')[:100]}\n   发件人: {mail.get('from', '')[:80]}")
+            email_idx_map[i] = mail
 
         email_text = "\n".join(email_list)
 
-        system_prompt = """你是一个邮件分类专家。根据邮件标题和发件人快速判断邮件类型。
+        system_prompt = """# Role: 我的学术事务执行官 (Chief of Staff)
 
-【分类选项 - 必须严格使用以下分类名称】
+## 你的身份设定
+你是我（一名忙碌的研究人员）的“第二大脑”。你深知我的时间和注意力是最宝贵的资源。
+你是我（一名忙碌的学术研究人员/博士生）的“第二大脑”。
+你的核心任务是：**保护我的注意力，极度冷酷地过滤噪音，只把真正需要我行动的事项呈递给我。**
 
-1. TRASH - 垃圾/无需关注的邮件：
-   - 会议征稿(CFP)、期刊投稿邀请、编辑邀请、特刊征稿
-   - 营销推广、折扣优惠、产品宣传、广告
-   - 引用提醒(citation alert)、重印本邀请、版权转让
-   - 系统通知：隔离区通知、密码重置、登录验证、GitHub通知
-   - 航空/酒店会员营销、积分通知
-   - Newsletter、订阅内容推送
+## 你的决策价值观（Persona Profile）
+1.  **极简主义**：我每天收到大量邮件，如果一封邮件不需要我回复、不需要我付费、不需要我立刻操作，它通常就是垃圾。
+2.  **结果导向**：我只关心论文的“结果”（录用/拒稿/修改），不关心“过程的周边”（谁引用了我、哪家云服务打折）。
+3.  **风险厌恶**：涉及“钱（账单）”和“前途（考试/截稿）”的邮件，优先级最高，绝对不能漏。
 
-2. ACADEMIC - 学术相关（需要关注）：
-   - 论文投稿状态：提交确认、审稿中、修改要求、接收、拒稿
-   - 审稿任务：审稿邀请、审稿提醒、截止日期提醒
-   - 稿件校对(proof)、作者查询(author query)
-   - 学术会议注册确认（不是征稿邀请）
+## 你的任务
+根据邮件标题和发件人，判断邮件的性质，并**严格**归入以下 8 个分类之一。
 
-3. BILLING - 账单相关：
-   - 信用卡账单、对账单、还款提醒
-   - 会员订阅费用、续费通知
-   - 发票、付款确认
+---
 
-4. NOTICE - 通知公告（需要了解）：
-   - 学校/单位官方通知："关于...的通知"
-   - 考试相关：准考证、成绩通知、报名确认
-   - IT服务通知：网络维护、系统升级
-   - 行政事务：人事、财务、后勤通知
+## 决策优先级与分类定义 (必须严格使用以下 Category 名称)
 
-5. PERSONAL - 个人邮件：
-   - 同事、朋友、合作者的直接邮件
-   - 非模板化的个人沟通
-   - 测试邮件
+请按以下**优先级顺序**进行判断，一旦匹配即停止：
 
-6. UNKNOWN - 无法从标题判断，需要看内容
+### 1. 【红线级】绝对不能漏 (Life & Money)
+* **EXAM**
+    * **定义**：涉及我个人前途的考试相关。
+    * **特征**：雅思(IELTS)、托福(TOEFL)、GRE、准考证(Admission Ticket)、成绩单(Score Report)、报名确认。
+    * **价值观**：这是“身家性命”，优先级最高。
+* **BILLING**
+    * **定义**：需要我付钱的账单。
+    * **特征**：信用卡账单、必须支付的会员续费、发票。
 
-【重要判断规则】
-- 发件人含 noreply、newsletter、marketing → 大概率 TRASH
-- 标题含 "call for"、"invitation to submit"、"special issue" → TRASH
-- 标题含 "manuscript"、"revision"、"decision"、"proof" → ACADEMIC
-- 标题含 "关于...的通知"、"Notice" 且来自edu.cn → NOTICE
-- 标题含 "账单"、"statement"、"billing" → BILLING
+### 2. 【核心级】需要我行动 (Action Required)
+* **PAPER**
+    * **定义**：**仅限**我正在投稿流程中的论文状态变更。
+    * **包含**：Submission confirmation, Revision required, Decision (Accept/Reject), Author query, Proofs。
+    * **🚫 严格排除（移至 TRASH）**：已发表论文的推销（Order Reprints, Posters）、引用提醒。
+* **REVIEW**
+    * **定义**：需要我审稿的任务。
+    * **特征**：Review Invitation, Review Reminder, Thank you for reviewing。
+* **NOTICE**
+    * **定义**：来自学校/单位的官方行政通知。
+    * **特征**：通常来自 `.edu.cn`，关于政策、放假、IT维护的官方通告。
+    * **🚫 严格排除（移至 TRASH）**：算力平台通知、图书馆新书推荐。
 
-【输出格式】
-返回JSON数组，每个元素包含邮件编号和分类：
-[{"id": 1, "category": "TRASH"}, {"id": 2, "category": "ACADEMIC"}, ...]"""
+### 3. 【社交级】真实的人 (Human)
+* **PERSONAL**
+    * **定义**：同事、导师、朋友发来的非群发邮件。
+    * **特征**：语气私人，非自动化模板。
 
-        user_prompt = f"""请分析以下邮件，根据标题和发件人判断分类：
+### 4. 【噪音级】最大的垃圾桶 (The Filter)
+* **TRASH**
+    * **定义**：任何不需要我立刻行动、付费或回复的信息。**这是最大的默认类别。**
+    * **包含 - 学术虚荣指标（重要！）**：引用提醒 (Citation Alert)、ResearchGate 阅读量通知、Google Scholar 更新。
+    * **包含 - 学术推销**：会议征稿 (CFP)、特刊邀请、版面费打折、书稿邀请、购买抽印本 (Order Reprints)。
+    * **包含 - 资源通知**：AutoDL/阿里云/腾讯云的资源包到期、显卡释放、活动通知（除非是欠费停机，否则都是垃圾）。
+    * **包含 - 其他**：Newsletter、问卷调查、GitHub 自动通知、系统验证码、TOS 更新。
+
+### 5. 【兜底】
+* **UNKNOWN**
+    * **定义**：经过上述判断仍无法确定的。
+
+---
+
+## 你的思考过程 (Internal Monologue)
+
+在输出前，请先自问：
+1. "这封邮件是关于考试(EXAM)或钱(BILLING)吗？" -> 是 -> 归类。
+2. "这封邮件是我正在投的论文(PAPER)或要审的稿(REVIEW)吗？" -> **警惕**：如果是叫我买Reprint或告诉我被引用了，这是推销，归入 TRASH。
+3. "这是学校行政(NOTICE)或真人(PERSONAL)吗？" -> **警惕**：算力平台通知是广告，归入 TRASH。
+4. "如果不属于以上所有，它就是 TRASH。"
+
+## 输出格式
+请直接返回 JSON 数组，不要包含 Markdown 标记：
+[
+  {"id": 1, "category": "TRASH", "reason": "引用提醒，属于学术虚荣指标，无需操作"},
+  {"id": 2, "category": "PAPER", "reason": "收到修改意见，属于核心投稿流程"}
+]"""
+
+        user_prompt = f"""分析以下邮件：
 
 {email_text}
 
@@ -156,169 +268,181 @@ class EmailClassifier:
 
         try:
             content = self._call_llm(system_prompt, user_prompt, timeout=60)
-
-            # 提取JSON
-            json_match = re.search(r'\[[\s\S]*\]', content)
-            if json_match:
-                results = json.loads(json_match.group())
-
-                # 更新邮件分类
-                result_map = {r["id"]: r["category"] for r in results}
-                for i, email in enumerate(emails, 1):
-                    category = result_map.get(i, self.CATEGORY_UNKNOWN)
-                    # 标准化分类名称
-                    category = category.upper()
-                    if category == "IMPORTANT":
-                        category = "NOTICE"
-                    email["_stage1_category"] = category
-
+            results = extract_json_from_text(content, expect_array=True)
+            if results and isinstance(results, list):
+                result_map = {r["id"]: r["category"].upper() for r in results if "id" in r and "category" in r}
+                for i, email in email_idx_map.items():
+                    email["_stage1_category"] = result_map.get(i, self.CATEGORY_UNKNOWN)
+            else:
+                print(f"   ⚠️ Stage 1 JSON解析失败，返回内容: {content[:200]}...")
+                for email in needs_llm:
+                    email["_stage1_category"] = self.CATEGORY_UNKNOWN
         except Exception as e:
             print(f"   ⚠️ Stage 1 批次分析失败: {e}")
-            # 失败时标记为UNKNOWN
-            for email in emails:
+            for email in needs_llm:
                 email["_stage1_category"] = self.CATEGORY_UNKNOWN
 
-    def stage2_analyze_content(self, emails: List[Dict], batch_size: int = 8) -> Dict:
-        """
-        Stage 2: 分析邮件内容
-
-        对Stage 1无法判断的邮件，或需要详细分析的学术邮件，
-        分析邮件正文提取详细信息。
-        为避免超时，分批处理。
-
-        Args:
-            emails: 需要分析的邮件列表（已加载body）
-            batch_size: 每批处理的邮件数量（默认8封，减少超时）
-
-        Returns:
-            分析结果（合并所有批次）
-        """
+    def stage2_analyze_content(self, emails: List[Dict]) -> Dict:
+        """Stage 2: 逐封分析邮件内容，提取详细信息"""
         if not emails:
             return {"items": [], "classifications": []}
 
         all_items = []
         all_classifications = []
 
-        # 分批处理
         total = len(emails)
-        for batch_start in range(0, total, batch_size):
-            batch_end = min(batch_start + batch_size, total)
-            batch = emails[batch_start:batch_end]
-            print(f"   📄 Stage 2: 分析 {batch_start+1}-{batch_end}/{total} 封邮件内容...")
+        for i, email in enumerate(emails, 1):
+            print(f"   📄 Stage 2: 分析 {i}/{total}...")
+            result = self._analyze_single_email(email, i)
 
-            result = self._analyze_content_batch(batch, batch_start)
-
-            # 合并结果，调整ID偏移
-            for item in result.get("items", []):
-                # 调整source_emails的ID
-                if "source_emails" in item:
-                    item["source_emails"] = [sid + batch_start for sid in item["source_emails"]]
+            if result.get("item"):
+                item = result["item"]
+                item["source_emails"] = [i]
                 all_items.append(item)
 
-            for cls in result.get("classifications", []):
-                cls["id"] = cls["id"] + batch_start
+            if result.get("classification"):
+                cls = result["classification"]
+                cls["id"] = i
                 all_classifications.append(cls)
 
         return {
             "items": all_items,
-            "classifications": all_classifications,
-            "summary": f"共分析 {total} 封邮件"
+            "classifications": all_classifications
         }
 
-    def _analyze_content_batch(self, emails: List[Dict], offset: int = 0) -> Dict:
-        """内部方法：分析一批邮件的内容"""
-        if not emails:
-            return {"items": [], "classifications": []}
+    def _analyze_single_email(self, email: Dict, idx: int) -> Dict:
+        """分析单封邮件内容"""
+        body = (email.get("body") or "")[:1500]
+        subject = email.get("subject", "")[:200]
+        from_addr = email.get("from", "")[:100]
 
-        # 准备邮件摘要（包含正文）
-        email_summaries = []
-        for i, mail in enumerate(emails, 1):
-            body = (mail.get("body") or "")[:800]
-            summary = f"{i}. 标题: {mail['subject'][:150]}\n   发件人: {mail['from'][:80]}\n   内容: {body}"
-            email_summaries.append(summary)
+        system_prompt = """# Role: 我的学术情报官 (Academic Intelligence Officer)
 
-        email_text = "\n\n".join(email_summaries)
+## 你的核心任务
+你是我的信息提取引擎。你需要阅读邮件，剥离所有客套话和噪音，将**核心结构化数据**填入我的仪表盘。
+**你的风格：** 像电报员一样精炼，像审计员一样严谨。
 
-        system_prompt = """你是一个学术邮件分析专家。分析邮件内容，提取结构化信息。
+---
 
-【任务】
-1. 确定每封邮件的最终分类
-2. 对学术邮件，提取论文/审稿详情
-3. 识别真正需要关注的邮件
+## 步骤 1：重要性评分协议 (Importance Protocol)
 
-【最终分类选项】
-- Paper/InProgress: 我的论文正在投稿流程中（提交、审稿中、修改、接收）
-- Review/Active: 我需要完成的审稿任务（有截止日期）
-- Review/Completed: 已完成的审稿（感谢信等）
-- Notice/School: 学校/单位通知
-- Notice/Exam: 考试相关（成绩、准考证）
-- Billing: 账单相关
-- Personal: 个人邮件
-- Trash: 垃圾邮件（征稿、营销、引用提醒等）"""
+请基于邮件对我的**职业生存**和**时间紧迫性**的影响进行评分（1-5分）：
 
-        user_prompt = f"""请分析以下邮件内容：
+* **5分 (CRITICAL / 紧急)**: **涉及“死线”或“前途”**。
+    * *逻辑*：如果我现在不看，我会挂科、被拒稿、违约或错过最后期限。
+    * *场景*：准考证/成绩单 (EXAM)、审稿/修稿剩余时间 < 7天、必须立即处理的行政命令。
+* **4分 (HIGH / 重要)**: **核心工作流**。
+    * *逻辑*：这是我的主要工作（发论文/审稿），需要安排时间处理，但不是今天就要炸。
+    * *场景*：新的审稿邀请、论文状态变更（接收/拒稿/大修）、考试报名确认。
+* **3分 (NORMAL / 一般)**: **信息同步**。
+    * *逻辑*：我需要知道这件事，但不需要我做什么。
+    * *场景*：系统维护通知、无具体deadline的行政通知、账单出账通知（自动扣款）。
+* **2分 (LOW / 闲杂)**: **可有可无**。
+    * *逻辑*：看了不亏，不看也没事。
+    * *场景*：讲座海报、非强制性的活动通知。
+* **1分 (TRASH / 垃圾)**: **噪音**。
+    * *逻辑*：任何试图推销东西、或者提供“虚荣指标”的邮件。
+    * *场景*：广告、积分营销、引用提醒、抽印本推销。
 
-{email_text}
+## 步骤 2：行动判定协议 (Action Protocol)
 
-【输出JSON格式】
-{{
-    "items": [
-        {{
-            "type": "paper" 或 "review",
-            "category": "Paper/InProgress" 或 "Review/Active",
-            "manuscript_id": "稿件编号",
-            "title": "论文标题",
-            "journal": "期刊",
-            "status": "状态",
-            "deadline": "截止日期（审稿）YYYY-MM-DD",
-            "last_update": "YYYY-MM-DD",
-            "source_emails": [对应邮件编号],
-            "notes": "备注"
-        }}
-    ],
-    "classifications": [
-        {{"id": 1, "category": "分类", "reason": "简要原因"}}
-    ],
-    "summary": "一句话总结"
-}}"""
+判断 `needs_action` (true/false)。**标准极度严格：**
+
+* **TRUE (必须行动)**：
+    * 邮件明确要求我**回复(Reply)**、**提交(Submit)**、**确认(Confirm)**、**支付(Pay)**或**打印(Print)**。
+    * *特例*：审稿/修稿任务，只要没完成，全是 true。
+* **FALSE (无需行动)**：
+    * **好消息**：论文被接收 (Accepted) -> 这是结果，不是动作。
+    * **已完成**：审稿完成感谢信 -> 任务结束。
+    * **纯通知**：账单金额通知（除非写着"支付失败"）、系统更新。
+    * **学术噪音**：引用提醒、下载量报告 -> 绝对 false。
+
+## 步骤 3：学术噪音识别 (Spam Detection)
+
+**【最高警惕】** 学术圈有很多伪装成“重要通知”的垃圾。
+如果邮件包含以下特征，直接标记为 `importance: 1` 且 `is_published_spam: true`：
+1.  **推销周边**：关键词 "order reprints", "order copies", "buy poster", "webshop"。
+2.  **虚荣指标**：关键词 "citation alert", "new citation", "article metrics"。
+3.  **已发表后续**：标题包含 "nearing publication" 但内容是让你买东西。
+
+## 步骤 4：信息提取与摘要 (Extraction)
+
+* **Venue (期刊/会议)**：必须准确提取（如 IEEE TGRS, CVPR, Nature）。
+* **Summary (摘要)**：**电报风格**，严禁废话，20字以内。
+    * *Good*: "TGRS论文需大修 DDL:2/15"
+    * *Good*: "雅思准考证已出 3/2考试"
+    * *Good*: "拒绝审稿邀请 Access"
+    * *Bad*: "这是一封来自IEEE的邮件，通知您的论文..." (太啰嗦)
+
+---
+
+## 输出格式 (JSON Only)
+
+请严格按照此结构返回 JSON，不要包含 Markdown 代码块标记：
+
+{
+    "item": {
+        // 仅当邮件是 Paper (投稿中) 或 Review (审稿中) 时填写，否则为 null
+        // 注意：如果是 EXAM 或 BILLING 或 TRASH，这里必须是 null
+        "type": "paper" 或 "review",
+        "venue_type": "journal" 或 "conference",
+        "category": "Paper/Journal" (论文) 或 "Review/Active" (审稿) 或 "Trash/Published" (学术垃圾),
+        "manuscript_id": "提取稿件号，如 TGRS-2024-1234",
+        "title": "提取论文标题",
+        "venue": "期刊缩写，如 IEEE TGRS",
+        "status": "状态，如 Under Review / Major Revision",
+        "deadline": "YYYY-MM-DD" (仅当明确提到截止日期时填写，否则 null),
+        "is_published_spam": false // 命中步骤3特征时为 true
+    },
+    "classification": {
+        "category": "分类 (PAPER/REVIEW/EXAM/BILLING/NOTICE/TRASH)",
+        "importance": 1-5 (整数),
+        "needs_action": true/false,
+        "summary": "20字电报式摘要",
+        "venue": "期刊名 (仅论文/审稿类填写，其他为空)"
+    }
+}"""
+
+        user_prompt = f"""分析这封邮件：
+
+标题: {subject}
+发件人: {from_addr}
+内容: {body}
+
+返回JSON："""
 
         try:
-            content = self._call_llm(system_prompt, user_prompt, timeout=90)
+            content = self._call_llm(system_prompt, user_prompt, timeout=60)
+            result = extract_json_from_text(content, expect_array=False)
+            if result and isinstance(result, dict):
+                # 更新邮件属性
+                cls = result.get("classification", {})
+                email["_final_category"] = cls.get("category", "Unknown")
+                email["_importance"] = cls.get("importance", 2)
+                email["_needs_action"] = cls.get("needs_action", False)
+                email["_summary"] = cls.get("summary", "")[:20]
+                email["_venue"] = cls.get("venue", "")
 
-            # 提取JSON
-            json_match = re.search(r'\{[\s\S]*\}', content)
-            if json_match:
-                result = json.loads(json_match.group())
-
-                # 更新邮件的最终分类
-                if "classifications" in result:
-                    class_map = {c["id"]: c["category"] for c in result["classifications"]}
-                    for i, email in enumerate(emails, 1):
-                        if i in class_map:
-                            email["_final_category"] = class_map[i]
+                # 检查是否是已发表论文的垃圾邮件
+                item = result.get("item")
+                if item and item.get("is_published_spam"):
+                    email["_final_category"] = "Trash/Published"
+                    email["_importance"] = 1
+                    email["_needs_action"] = False
 
                 return result
-
+            else:
+                print(f"      ⚠️ Stage 2 JSON解析失败")
         except Exception as e:
-            print(f"   ⚠️ Stage 2 批次分析失败: {e}")
+            print(f"      ⚠️ 分析失败: {e}")
 
-        return {"items": [], "classifications": []}
+        return {}
 
     def classify_single(self, email: Dict) -> str:
-        """
-        分类单封邮件（用于实时处理）
-
-        Args:
-            email: 邮件字典
-
-        Returns:
-            分类结果
-        """
-        # 先用标题判断
-        emails = self.stage1_classify_batch([email])
+        """分类单封邮件"""
+        self.stage1_classify_batch([email])
         category = email.get("_stage1_category", self.CATEGORY_UNKNOWN)
 
-        # 如果无法判断，需要分析内容
         if category == self.CATEGORY_UNKNOWN and email.get("body"):
             result = self.stage2_analyze_content([email])
             if result.get("classifications"):
@@ -326,11 +450,3 @@ class EmailClassifier:
                 email["_final_category"] = category
 
         return category
-
-
-# 为了向后兼容，保留旧的常量名
-EmailClassifier.STAGE1_TRASH = EmailClassifier.CATEGORY_TRASH
-EmailClassifier.STAGE1_ACADEMIC = EmailClassifier.CATEGORY_ACADEMIC
-EmailClassifier.STAGE1_BILLING = EmailClassifier.CATEGORY_BILLING
-EmailClassifier.STAGE1_UNKNOWN = EmailClassifier.CATEGORY_UNKNOWN
-EmailClassifier.CATEGORY_IMPORTANT = EmailClassifier.CATEGORY_NOTICE

@@ -186,7 +186,7 @@ class BillingProcessor:
 
     def process(self, billing_items: List[Dict]) -> Dict:
         """
-        处理账单项目：更新本地数据库，有变化时同步到Notion
+        处理账单项目：更新本地数据库，同步到Notion
 
         Args:
             billing_items: 解析出的账单项目列表
@@ -236,9 +236,14 @@ class BillingProcessor:
                 if is_new or has_changes:
                     updated_records += 1
 
-                    # 3. 同步到Notion
-                    if self._sync_to_notion(db_item, item, period):
-                        synced_to_notion += 1
+            # 3. 每个账单项目都尝试同步到Notion（无论是否有period）
+            try:
+                # 重新获取db_item确保有最新数据
+                db_item = self.db.get_item_by_name(name)
+                if self._sync_to_notion(db_item, item, period or ""):
+                    synced_to_notion += 1
+            except Exception as e:
+                print(f"      ⚠️ 同步账单到Notion失败 ({name}): {e}")
 
         return {
             "new_items": new_items,
@@ -345,12 +350,12 @@ class BillingProcessor:
         return False
 
     def _find_existing_record(self, db_id: str, name: str, period: str) -> Optional[str]:
-        """查找现有记录"""
+        """查找现有记录（使用精确匹配）"""
         result = self.notion._request("POST", f"/databases/{db_id}/query", {
             "filter": {
                 "and": [
-                    {"property": "名称", "title": {"contains": name}},
-                    {"property": "账期", "rich_text": {"contains": period}},
+                    {"property": "名称", "title": {"equals": name}},
+                    {"property": "账期", "rich_text": {"equals": period}},
                 ]
             }
         })

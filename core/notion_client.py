@@ -93,7 +93,15 @@ class NotionClient:
             "properties": {
                 "论文标题": {"title": {}},
                 "稿件编号": {"rich_text": {}},
-                "期刊": {"rich_text": {}},
+                "类型": {
+                    "select": {
+                        "options": [
+                            {"name": "期刊", "color": "blue"},
+                            {"name": "会议", "color": "purple"},
+                        ]
+                    }
+                },
+                "期刊/会议": {"rich_text": {}},
                 "状态": {
                     "select": {
                         "options": [
@@ -184,8 +192,20 @@ class NotionClient:
 
         existing = self.get_existing_records(db_id)
         manuscript_id = paper.get("manuscript_id", "") or ""
-        title = (paper.get("title", "") or "未知论文")[:100]
+        title = (paper.get("title", "") or "")[:100]
+
+        # 标题不能为空
+        if not title:
+            return False
+
         status = normalize_paper_status(paper.get("status", ""))
+
+        # 期刊/会议类型
+        venue_type = paper.get("venue_type", "journal")
+        venue_type_name = "期刊" if venue_type == "journal" else "会议"
+
+        # 期刊/会议名称
+        venue = (paper.get("venue", "") or paper.get("journal", "") or "")[:100]
 
         # 查找是否已存在
         existing_record = existing.get(manuscript_id) or existing.get(title[:50])
@@ -195,7 +215,7 @@ class NotionClient:
             update_data = {
                 "properties": {
                     "状态": {"select": {"name": status}},
-                    "备注": {"rich_text": [{"text": {"content": (paper.get("notes", "") or "")[:500]}}]},
+                    "备注": {"rich_text": [{"text": {"content": (paper.get("summary", "") or paper.get("notes", "") or "")[:500]}}]},
                 }
             }
             if paper.get("last_update"):
@@ -210,9 +230,10 @@ class NotionClient:
                 "properties": {
                     "论文标题": {"title": [{"text": {"content": title}}]},
                     "稿件编号": {"rich_text": [{"text": {"content": manuscript_id}}]},
-                    "期刊": {"rich_text": [{"text": {"content": (paper.get("journal", "") or "")[:100]}}]},
+                    "类型": {"select": {"name": venue_type_name}},
+                    "期刊/会议": {"rich_text": [{"text": {"content": venue}}]},
                     "状态": {"select": {"name": status}},
-                    "备注": {"rich_text": [{"text": {"content": (paper.get("notes", "") or "")[:500]}}]},
+                    "备注": {"rich_text": [{"text": {"content": (paper.get("summary", "") or paper.get("notes", "") or "")[:500]}}]},
                 }
             }
             if paper.get("last_update"):
@@ -286,19 +307,27 @@ class NotionClient:
                     "select": {
                         "options": [
                             {"name": "学术", "color": "purple"},
+                            {"name": "审稿", "color": "orange"},
                             {"name": "账单", "color": "green"},
-                            {"name": "其他", "color": "gray"},
+                            {"name": "通知", "color": "blue"},
+                            {"name": "考试", "color": "pink"},
+                            {"name": "个人", "color": "yellow"},
                         ]
                     }
                 },
-                "状态": {
+                "重要程度": {
                     "select": {
                         "options": [
-                            {"name": "已处理", "color": "green"},
-                            {"name": "待处理", "color": "yellow"},
+                            {"name": "5-紧急", "color": "red"},
+                            {"name": "4-重要", "color": "orange"},
+                            {"name": "3-一般", "color": "yellow"},
+                            {"name": "2-可选", "color": "blue"},
+                            {"name": "1-低", "color": "gray"},
                         ]
                     }
                 },
+                "需处理": {"checkbox": {}},
+                "期刊/会议": {"rich_text": {}},
                 "日期": {"date": {}},
                 "摘要": {"rich_text": {}},
             }
@@ -309,8 +338,18 @@ class NotionClient:
             return result["id"]
         return None
 
-    def sync_email(self, email: Dict, category: str) -> bool:
-        """同步邮件记录到邮件整理数据库"""
+    def sync_email(self, email: Dict, category: str, importance: int = 3, needs_action: bool = False, summary: str = "", venue: str = "") -> bool:
+        """
+        同步邮件记录到邮件整理数据库
+
+        Args:
+            email: 邮件数据
+            category: 分类（学术、审稿、账单、通知、考试、个人）
+            importance: 重要程度 1-5
+            needs_action: 是否需要处理
+            summary: 10字内摘要
+            venue: 期刊/会议名称
+        """
         db_id = self.get_emails_db()
         if not db_id:
             return False
@@ -319,7 +358,26 @@ class NotionClient:
         from_addr = (email.get("from", "") or "")[:100]
         account = email.get("account", "QQ邮箱")
         date_str = email.get("date_str", "")
-        body = (email.get("body", "") or "")[:200]
+
+        # 使用LLM生成的摘要
+        if not summary:
+            summary = email.get("_summary", "")
+        summary = summary[:20]  # 限制20字
+
+        # 期刊/会议名
+        if not venue:
+            venue = email.get("_venue", "") or ""
+        venue = (venue or "")[:50]
+
+        # 重要程度映射
+        importance_map = {
+            5: "5-紧急",
+            4: "4-重要",
+            3: "3-一般",
+            2: "2-可选",
+            1: "1-低",
+        }
+        importance_name = importance_map.get(importance, "2-可选")
 
         # 构建页面数据
         page_data = {
@@ -329,8 +387,10 @@ class NotionClient:
                 "发件人": {"rich_text": [{"text": {"content": from_addr}}]},
                 "邮箱": {"select": {"name": account}},
                 "分类": {"select": {"name": category}},
-                "状态": {"select": {"name": "已处理"}},
-                "摘要": {"rich_text": [{"text": {"content": body}}]},
+                "重要程度": {"select": {"name": importance_name}},
+                "需处理": {"checkbox": needs_action},
+                "期刊/会议": {"rich_text": [{"text": {"content": venue}}]},
+                "摘要": {"rich_text": [{"text": {"content": summary}}]},
             }
         }
 

@@ -38,18 +38,19 @@ class AcademicProcessor:
                 skipped += 1
                 continue
 
-            if item_type == "paper" and category == "Paper/InProgress":
+            if item_type == "paper" and category in ["Paper/InProgress", "Paper/Journal", "Paper/Conference"]:
                 if self.notion.sync_paper(item):
                     papers_synced += 1
-                    title = (item.get('title') or '未知论文')[:40]
-                    print(f"   ✓ 论文: [{item.get('status', '?')}] {title}...")
+                    venue = item.get('venue', '?')[:20]
+                    title = (item.get('title') or '?')[:30]
+                    print(f"   ✓ 论文: [{venue}] {title}...")
 
             elif item_type == "review" and category == "Review/Active":
                 if self.notion.sync_review(item):
                     reviews_synced += 1
                     deadline = item.get('deadline') or '无'
-                    title = (item.get('title') or '未知论文')[:40]
-                    print(f"   ✓ 审稿: [DDL:{deadline}] {title}...")
+                    venue = item.get('venue', '?')[:20]
+                    print(f"   ✓ 审稿: [DDL:{deadline}] {venue}...")
 
         return {
             "papers_synced": papers_synced,

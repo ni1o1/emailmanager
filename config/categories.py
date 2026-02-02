@@ -3,6 +3,51 @@
 两阶段分类策略
 """
 
+# ============== 发件人优先级系统 ==============
+
+# 高优先级发件人（白名单）- 这些发件人的邮件应该被优先处理
+HIGH_PRIORITY_SENDERS = {
+    # 考试机构 - 最高优先级
+    "ielts": {"category": "EXAM", "importance": 5},
+    "britishcouncil": {"category": "EXAM", "importance": 5},
+    "ets.org": {"category": "EXAM", "importance": 5},
+    "toefl": {"category": "EXAM", "importance": 5},
+    "gre": {"category": "EXAM", "importance": 5},
+    "candidates.cambridgeenglish": {"category": "EXAM", "importance": 5},
+
+    # 银行账单 - 重要（中文名称 + 域名）
+    "招商银行": {"category": "BILLING", "importance": 4},
+    "cmbchina": {"category": "BILLING", "importance": 4},  # 招商银行域名
+    "95555": {"category": "BILLING", "importance": 4},  # 招商银行号码
+    "工商银行": {"category": "BILLING", "importance": 4},
+    "icbc": {"category": "BILLING", "importance": 4},  # 工商银行域名
+    "建设银行": {"category": "BILLING", "importance": 4},
+    "ccb.com": {"category": "BILLING", "importance": 4},  # 建设银行域名
+    "交通银行": {"category": "BILLING", "importance": 4},
+    "bankcomm": {"category": "BILLING", "importance": 4},  # 交通银行域名
+    "中国银行": {"category": "BILLING", "importance": 4},
+    "boc.cn": {"category": "BILLING", "importance": 4},  # 中国银行域名
+    "citibank": {"category": "BILLING", "importance": 4},
+    "citi.com": {"category": "BILLING", "importance": 4},
+}
+
+# 垃圾发件人（黑名单）- 直接标记为TRASH
+TRASH_SENDERS = [
+    # 算力/云服务平台
+    "autodl", "autoDL", "阿里云", "aliyun", "腾讯云", "tencent cloud",
+    "huawei cloud", "华为云", "aws", "azure",
+
+    # 论文出版后的广告
+    "reprints@", "copyright.com", "webshop",
+
+    # 营销平台
+    "noreply", "no-reply", "newsletter", "marketing", "promotion",
+    "advertising", "mailer-daemon", "postmaster",
+
+    # 会议/期刊垃圾
+    "mdpi", "hindawi", "frontiers", "scirp",
+]
+
 # ============== Stage 1: 快速标题筛选规则 ==============
 
 # 垃圾邮件关键词（标题/发件人匹配任一即为垃圾）
@@ -78,7 +123,11 @@ CATEGORIES = {
 }
 
 # 需要同步到Notion的分类
-SYNC_CATEGORIES = ["Paper/InProgress", "Review/Active", "Action/Important", "Info/Newsletter"]
+SYNC_CATEGORIES = [
+    "Paper/InProgress", "Paper/Journal", "Paper/Conference",  # 论文
+    "Review/Active",  # 审稿
+    "Action/Important", "Info/Newsletter"
+]
 
 # 直接丢弃的分类
 TRASH_CATEGORIES = ["Academic/Admin_Noise", "Spam/Conference", "Spam/Journal", "Spam/Other"]
