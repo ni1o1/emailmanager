@@ -11,6 +11,7 @@ from typing import List, Dict
 from config.settings import (
     CHECK_INTERVAL,
     MAX_EMAILS_PER_BATCH,
+    DAILY_REPORT_TIME,
     IMESSAGE_ENABLED,
     IMESSAGE_NOTIFY_LEVEL,
     IMESSAGE_QUIET_HOURS,
@@ -33,9 +34,15 @@ from processors.email_processor import (
 
 logger = get_logger(__name__)
 
-# 每日简报时间（14:00）
-DAILY_REPORT_HOUR = 14
-DAILY_REPORT_MINUTE = 0
+# 解析每日简报时间
+def _parse_daily_report_time():
+    try:
+        parts = DAILY_REPORT_TIME.split(":")
+        return int(parts[0]), int(parts[1])
+    except (ValueError, IndexError):
+        return 14, 0  # 默认 14:00
+
+DAILY_REPORT_HOUR, DAILY_REPORT_MINUTE = _parse_daily_report_time()
 
 
 class EmailWatcher:

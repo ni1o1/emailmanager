@@ -65,8 +65,11 @@ NOTION_PARENT_PAGE_ID = os.getenv("NOTION_PARENT_PAGE_ID", "")
 
 # ============== 定时任务配置 ==============
 
-CHECK_INTERVAL = 600  # 10分钟检查一次
-MAX_EMAILS_PER_BATCH = 100  # 每批最多处理邮件数
+CHECK_INTERVAL = int(os.getenv("CHECK_INTERVAL", "600"))  # 检查间隔（秒）
+MAX_EMAILS_PER_BATCH = int(os.getenv("MAX_EMAILS_PER_BATCH", "100"))  # 每批最多处理邮件数
+
+# 每日简报时间（格式：HH:MM）
+DAILY_REPORT_TIME = os.getenv("DAILY_REPORT_TIME", "14:00")
 
 # ============== 状态数据库 ==============
 
