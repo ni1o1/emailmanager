@@ -96,6 +96,12 @@ PKU_EMAIL_PASSWORD=your_password
 # ============== Kimi API ==============
 
 KIMI_API_KEY=your_kimi_api_key
+# API 地址（可选，默认 Moonshot）
+# KIMI_API_URL=https://api.moonshot.cn/v1/chat/completions
+# 模型名称（可选，默认 kimi-k2.5）
+# KIMI_MODEL=kimi-k2.5
+# 超时时间秒（可选，默认 120）
+# KIMI_TIMEOUT=120
 
 # ============== Notion ==============
 

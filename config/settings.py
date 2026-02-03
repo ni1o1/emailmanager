@@ -43,10 +43,10 @@ EMAIL_SIGNATURE = os.getenv("EMAIL_SIGNATURE", "").replace("\\n", "\n")
 
 # ============== Kimi API 配置 ==============
 
-KIMI_API_URL = "https://api.moonshot.cn/v1/chat/completions"
+KIMI_API_URL = os.getenv("KIMI_API_URL", "https://api.moonshot.cn/v1/chat/completions")
 KIMI_API_KEY = os.getenv("KIMI_API_KEY", "")
-KIMI_MODEL = "kimi-k2.5"
-KIMI_TIMEOUT = 120  # 秒
+KIMI_MODEL = os.getenv("KIMI_MODEL", "kimi-k2.5")
+KIMI_TIMEOUT = int(os.getenv("KIMI_TIMEOUT", "120"))  # 秒
 
 # ============== Notion 配置 ==============
 
