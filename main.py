@@ -14,8 +14,17 @@ import argparse
 # 添加项目根目录到路径
 sys.path.insert(0, '/Users/yuqing/emailmanager')
 
+from core.logger import get_logger, setup_logging
+from core.validator import require_valid_config
 from scheduler.watcher import EmailWatcher
 from core.state import StateManager
+
+# 初始化日志系统
+setup_logging()
+logger = get_logger(__name__)
+
+# 验证配置
+require_valid_config()
 
 
 def main():

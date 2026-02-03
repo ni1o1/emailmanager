@@ -7,13 +7,17 @@ import time
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 from config.settings import (
     NOTION_API_URL, NOTION_TOKEN, NOTION_VERSION,
     NOTION_DB_PAPERS, NOTION_DB_REVIEWS, NOTION_DB_EMAILS, NOTION_PARENT_PAGE_ID
 )
 from config.categories import normalize_paper_status, normalize_review_status
+from core.logger import get_logger
+from core.exceptions import NotionError
+
+logger = get_logger(__name__)
 
 
 class NotionClient:
@@ -40,6 +44,7 @@ class NotionClient:
 
         for attempt in range(3):
             try:
+                start_time = time.time()
                 if method == "GET":
                     response = self.session.get(url, headers=self.headers, timeout=30)
                 elif method == "POST":
@@ -48,11 +53,25 @@ class NotionClient:
                     response = self.session.patch(url, headers=self.headers, json=data, timeout=30)
                 else:
                     return {"error": f"Unsupported method: {method}"}
-                return response.json()
+
+                duration = time.time() - start_time
+                result = response.json()
+
+                # 检查 API 错误
+                if response.status_code != 200:
+                    logger.warning(
+                        f"Notion API 错误: {response.status_code} "
+                        f"({result.get('code', 'unknown')}: {result.get('message', 'no message')})"
+                    )
+
+                logger.debug(f"Notion API {method} {endpoint}: {duration:.2f}s")
+                return result
             except Exception as e:
+                logger.warning(f"Notion API 请求失败 (尝试 {attempt + 1}/3): {e}")
                 if attempt < 2:
                     time.sleep(2)
                     continue
+                logger.error(f"Notion API 请求最终失败: {e}")
                 return {"error": str(e)}
 
     def find_database(self, name_contains: str) -> Optional[str]:

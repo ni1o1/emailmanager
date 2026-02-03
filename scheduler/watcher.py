@@ -5,7 +5,7 @@
 """
 
 import time
-from datetime import datetime
+from datetime import datetime, date
 from typing import List, Dict
 
 from config.settings import (
@@ -21,9 +21,21 @@ from core.state import StateManager
 from core.billing_db import BillingDB
 from core.imessage import iMessageClient
 from core.message_formatter import MessageFormatter
+from core.logger import get_logger, LogContext
+from core.metrics import metrics
 from processors.classifier import EmailClassifier
 from processors.academic import AcademicProcessor
 from processors.billing import BillingProcessor
+from processors.email_processor import (
+    group_emails_by_category,
+    print_classification_stats,
+)
+
+logger = get_logger(__name__)
+
+# 每日简报时间（14:00）
+DAILY_REPORT_HOUR = 14
+DAILY_REPORT_MINUTE = 0
 
 
 class EmailWatcher:
@@ -41,6 +53,81 @@ class EmailWatcher:
         # iMessage 通知
         self.imessage = iMessageClient()
         self.formatter = MessageFormatter()
+
+        # 记录上次发送每日简报的日期
+        self._last_daily_report_date = None
+
+    def _send_startup_notification(self):
+        """发送启动通知"""
+        if not IMESSAGE_ENABLED:
+            return
+
+        now = datetime.now()
+        message = f"📧 邮件监控已启动\n{now.strftime('%Y-%m-%d %H:%M')}\n\n每10分钟检查新邮件\n每天14:00发送统计简报"
+
+        result = self.imessage.send_silent(message)
+        if result:
+            print("   📱 已发送启动通知")
+
+    def _should_send_daily_report(self) -> bool:
+        """检查是否应该发送每日简报"""
+        now = datetime.now()
+        today = date.today()
+
+        # 检查是否已经发送过今天的简报
+        if self._last_daily_report_date == today:
+            return False
+
+        # 检查是否到达发送时间（14:00）
+        if now.hour == DAILY_REPORT_HOUR and now.minute < DAILY_REPORT_MINUTE + 10:
+            # 在14:00-14:10之间发送
+            return True
+
+        return False
+
+    def _send_daily_report(self):
+        """发送每日统计简报"""
+        if not IMESSAGE_ENABLED:
+            return
+
+        today = date.today()
+
+        # 获取今日统计
+        stats = self.state.get_stats(days=1)
+
+        # 构建简报消息
+        lines = []
+        lines.append("📊 邮件日报")
+        lines.append(today.strftime("%Y-%m-%d"))
+        lines.append("")
+
+        total = stats.get("total", 0)
+        lines.append(f"今日处理: {total} 封")
+
+        # 分类统计
+        by_stage1 = stats.get("by_stage1", {})
+        if by_stage1:
+            lines.append("")
+            category_names = {
+                "TRASH": "🗑️ 垃圾",
+                "PAPER": "📄 论文",
+                "REVIEW": "📝 审稿",
+                "BILLING": "💳 账单",
+                "NOTICE": "📢 通知",
+                "EXAM": "📋 考试",
+                "PERSONAL": "👤 个人",
+            }
+            for key, count in by_stage1.items():
+                if count > 0:
+                    name = category_names.get(key, key)
+                    lines.append(f"{name}: {count}")
+
+        message = "\n".join(lines)
+
+        result = self.imessage.send_silent(message)
+        if result:
+            print("   📱 已发送每日简报")
+            self._last_daily_report_date = today
 
     def _is_quiet_hours(self) -> bool:
         """检查是否在静默时段"""
@@ -104,72 +191,48 @@ class EmailWatcher:
         Returns:
             处理结果统计
         """
-        print(f"\n{'='*50}")
-        print(f"📬 检查新邮件 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        print('='*50)
+        logger.info(f"{'='*50}")
+        logger.info(f"检查新邮件 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info('='*50)
 
         # 1. 获取未读邮件
-        print("\n📥 获取未读邮件...")
+        logger.info("获取未读邮件...")
         all_unread = self.email_client.fetch_unread_emails(limit=MAX_EMAILS_PER_BATCH)
-        print(f"   找到 {len(all_unread)} 封未读邮件")
+        logger.info(f"找到 {len(all_unread)} 封未读邮件")
 
         if not all_unread:
-            print("   ✓ 没有新邮件")
+            logger.info("没有新邮件")
             return {"total": 0, "new": 0}
 
         # 2. 过滤已处理的
         processed_ids = self.state.get_processed_ids()
         new_emails = [e for e in all_unread if e.get("message_id") not in processed_ids]
-        print(f"   其中 {len(new_emails)} 封是新邮件")
+        logger.info(f"其中 {len(new_emails)} 封是新邮件")
 
         if not new_emails:
-            print("   ✓ 没有需要处理的新邮件")
+            logger.info("没有需要处理的新邮件")
             return {"total": len(all_unread), "new": 0}
 
         # 3. Stage 1: LLM分析标题分类
-        print(f"\n🤖 Stage 1: LLM分析邮件标题...")
+        logger.info("Stage 1: LLM分析邮件标题...")
         self.classifier.stage1_classify_batch(new_emails)
 
         # 按分类分组
-        trash_emails = []
-        paper_emails = []
-        review_emails = []
-        billing_emails = []
-        notice_emails = []
-        exam_emails = []
-        personal_emails = []
-        unknown_emails = []
+        groups = group_emails_by_category(new_emails)
+        trash_emails = groups["TRASH"]
+        paper_emails = groups["PAPER"]
+        review_emails = groups["REVIEW"]
+        billing_emails = groups["BILLING"]
+        notice_emails = groups["NOTICE"]
+        exam_emails = groups["EXAM"]
+        personal_emails = groups["PERSONAL"]
+        unknown_emails = groups["UNKNOWN"]
 
-        for email in new_emails:
-            category = email.get("_stage1_category", "UNKNOWN")
-            if category == "TRASH":
-                trash_emails.append(email)
-            elif category == "PAPER":
-                paper_emails.append(email)
-            elif category == "REVIEW":
-                review_emails.append(email)
-            elif category == "BILLING":
-                billing_emails.append(email)
-            elif category == "NOTICE":
-                notice_emails.append(email)
-            elif category == "EXAM":
-                exam_emails.append(email)
-            elif category == "PERSONAL":
-                personal_emails.append(email)
-            else:
-                unknown_emails.append(email)
-
-        print(f"   垃圾邮件: {len(trash_emails)} 封")
-        print(f"   论文投稿: {len(paper_emails)} 封")
-        print(f"   审稿任务: {len(review_emails)} 封")
-        print(f"   账单邮件: {len(billing_emails)} 封")
-        print(f"   通知公告: {len(notice_emails)} 封")
-        print(f"   考试相关: {len(exam_emails)} 封")
-        print(f"   个人邮件: {len(personal_emails)} 封")
-        print(f"   待分析: {len(unknown_emails)} 封")
+        print_classification_stats(groups)
 
         # 记录垃圾邮件（不同步到Notion）
         for email in trash_emails:
+            metrics.record_email("TRASH")
             self.state.mark_processed(
                 message_id=email.get("message_id"),
                 account=email.get("account"),
@@ -185,29 +248,28 @@ class EmailWatcher:
         need_stage2 = paper_emails + review_emails + unknown_emails
         if need_stage2:
             # 加载邮件正文
-            print(f"\n📖 加载邮件内容...")
+            logger.info("加载邮件内容...")
             for email in need_stage2:
                 self.email_client.load_email_body(email)
 
-            print(f"\n🤖 Stage 2: LLM分析邮件内容...")
+            logger.info("Stage 2: LLM分析邮件内容...")
             analysis = self.classifier.stage2_analyze_content(need_stage2)
 
             items = analysis.get("items", [])
             classifications = analysis.get("classifications", [])
 
-            print(f"   识别到 {len(items)} 个学术项目")
+            logger.info(f"识别到 {len(items)} 个学术项目")
 
             # 统计分类结果
             class_map = {c["id"]: c for c in classifications}
             trash_count = sum(1 for c in classifications if "Trash" in c.get("category", ""))
             if trash_count:
-                print(f"   LLM判定垃圾: {trash_count} 封")
+                logger.info(f"LLM判定垃圾: {trash_count} 封")
 
             if items:
-                print(f"\n📝 同步学术项目到 Notion...")
+                logger.info("同步学术项目到 Notion...")
                 result = self.academic_processor.process(items)
-                print(f"   论文: {result['papers_synced']} 条")
-                print(f"   审稿: {result['reviews_synced']} 条")
+                logger.info(f"论文: {result['papers_synced']} 条, 审稿: {result['reviews_synced']} 条")
 
             # 记录处理状态
             for i, email in enumerate(need_stage2, 1):
@@ -251,7 +313,7 @@ class EmailWatcher:
 
         # 5. 处理账单邮件
         if billing_emails:
-            print(f"\n💳 分析账单邮件...")
+            logger.info("分析账单邮件...")
             # 加载正文
             for email in billing_emails:
                 self.email_client.load_email_body(email)
@@ -259,11 +321,9 @@ class EmailWatcher:
             billing_items = self.billing_processor.parse_billing_emails(billing_emails)
 
             if billing_items:
-                print(f"   识别到 {len(billing_items)} 个账单项目")
+                logger.info(f"识别到 {len(billing_items)} 个账单项目")
                 result = self.billing_processor.process(billing_items)
-                print(f"   新条目: {result['new_items']}")
-                print(f"   更新记录: {result['updated_records']}")
-                print(f"   同步Notion: {result['synced_to_notion']}")
+                logger.info(f"新条目: {result['new_items']}, 更新记录: {result['updated_records']}, 同步Notion: {result['synced_to_notion']}")
 
             # 同步账单邮件到邮件整理（账单不需要处理，只是记录）
             for email in billing_emails:
@@ -282,7 +342,7 @@ class EmailWatcher:
 
         # 6. 处理通知公告邮件（需要Stage 2分析重要程度）
         if notice_emails:
-            print(f"\n📢 分析通知邮件...")
+            logger.info("分析通知邮件...")
             for email in notice_emails:
                 self.email_client.load_email_body(email)
 
@@ -310,7 +370,7 @@ class EmailWatcher:
 
         # 7. 处理考试相关邮件（用Stage 2分析）
         if exam_emails:
-            print(f"\n📝 处理考试邮件...")
+            logger.info("处理考试邮件...")
             for email in exam_emails:
                 self.email_client.load_email_body(email)
 
@@ -336,7 +396,7 @@ class EmailWatcher:
 
         # 8. 处理个人邮件（用Stage 2分析）
         if personal_emails:
-            print(f"\n👤 处理个人邮件...")
+            logger.info("处理个人邮件...")
             for email in personal_emails:
                 self.email_client.load_email_body(email)
 
@@ -360,7 +420,7 @@ class EmailWatcher:
             self.email_client.mark_as_read(email["account"], email["email_id"])
 
         if synced_to_emails_db > 0:
-            print(f"\n📋 同步到邮件整理: {synced_to_emails_db} 封")
+            logger.info(f"同步到邮件整理: {synced_to_emails_db} 封")
 
         # 收集重要邮件（用于通知）
         important_emails = []
@@ -387,9 +447,7 @@ class EmailWatcher:
         # 发送 iMessage 通知（传入所有新邮件以显示摘要）
         self._send_notification(stats, important_emails, new_emails)
 
-        print(f"\n{'='*50}")
-        print(f"✅ 处理完成")
-        print('='*50)
+        logger.info(f"处理完成: 新邮件 {len(new_emails)} 封, 垃圾 {len(trash_emails)} 封")
 
         return stats
 
@@ -401,27 +459,41 @@ class EmailWatcher:
             interval: 检查间隔（秒），默认使用配置
         """
         interval = interval or CHECK_INTERVAL
-        print(f"\n🚀 邮件监控已启动")
-        print(f"   检查间隔: {interval}秒 ({interval//60}分钟)")
-        print(f"   按 Ctrl+C 停止\n")
+        logger.info("邮件监控已启动")
+        logger.info(f"检查间隔: {interval}秒 ({interval//60}分钟)")
+        logger.info(f"每日简报: {DAILY_REPORT_HOUR}:{DAILY_REPORT_MINUTE:02d}")
+        logger.info("按 Ctrl+C 停止")
+
+        # 发送启动通知
+        self._send_startup_notification()
 
         try:
             while True:
                 try:
+                    # 检查是否需要发送每日简报
+                    if self._should_send_daily_report():
+                        logger.info("发送每日简报...")
+                        self._send_daily_report()
+
                     self.check_and_process()
                 except Exception as e:
-                    print(f"\n⚠️ 处理出错: {e}")
+                    logger.error(f"处理出错: {e}", exc_info=True)
                     # 发送错误通知（可选）
                     if IMESSAGE_ENABLED and not self._is_quiet_hours():
                         error_msg = self.formatter.format_error_alert(str(e), "邮件处理")
                         self.imessage.send_silent(error_msg)
 
-                print(f"\n⏰ 下次检查: {interval}秒后...")
+                logger.debug(f"下次检查: {interval}秒后...")
                 time.sleep(interval)
 
         except KeyboardInterrupt:
-            print("\n\n👋 监控已停止")
+            logger.info("监控已停止")
+            # 输出性能指标摘要
+            metrics.log_summary()
 
     def run_once(self):
         """运行一次检查"""
-        return self.check_and_process()
+        result = self.check_and_process()
+        # 输出性能指标摘要
+        logger.debug(metrics.summary())
+        return result
