@@ -8,7 +8,6 @@ import sys
 sys.path.insert(0, '/Users/yuqing/emailmanager')
 
 from datetime import datetime
-from typing import List, Dict
 
 from core.email_client import EmailClient
 from core.notion_client import NotionClient
@@ -17,12 +16,13 @@ from core.billing_db import BillingDB
 from processors.classifier import EmailClassifier
 from processors.academic import AcademicProcessor
 from processors.billing import BillingProcessor
+from processors.email_processor import group_emails_by_category, print_classification_stats
 
 
-def process_week_emails():
-    """处理最近一周的所有邮件"""
+def process_week_emails(days=7):
+    """处理最近N天的所有邮件"""
     print("=" * 60)
-    print("📬 处理最近一周邮件并同步到 Notion")
+    print(f"📬 处理最近 {days} 天邮件并同步到 Notion")
     print(f"   开始时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print("=" * 60)
 
@@ -35,9 +35,9 @@ def process_week_emails():
     academic_processor = AcademicProcessor(notion)
     billing_processor = BillingProcessor(billing_db, notion)
 
-    # 1. 获取最近一周的所有邮件
-    print("\n📥 获取最近一周邮件...")
-    all_emails = email_client.fetch_recent_emails(days=7, limit=200)
+    # 1. 获取最近N天的所有邮件
+    print(f"\n📥 获取最近 {days} 天邮件...")
+    all_emails = email_client.fetch_recent_emails(days=days, limit=200)
     print(f"   共找到 {len(all_emails)} 封邮件")
 
     if not all_emails:
@@ -49,43 +49,18 @@ def process_week_emails():
     classifier.stage1_classify_batch(all_emails)
 
     # 按分类分组
-    trash_emails = []
-    paper_emails = []
-    review_emails = []
-    billing_emails = []
-    notice_emails = []
-    exam_emails = []
-    personal_emails = []
-    unknown_emails = []
-
-    for email in all_emails:
-        category = email.get("_stage1_category", "UNKNOWN")
-        if category == "TRASH":
-            trash_emails.append(email)
-        elif category == "PAPER":
-            paper_emails.append(email)
-        elif category == "REVIEW":
-            review_emails.append(email)
-        elif category == "BILLING":
-            billing_emails.append(email)
-        elif category == "NOTICE":
-            notice_emails.append(email)
-        elif category == "EXAM":
-            exam_emails.append(email)
-        elif category == "PERSONAL":
-            personal_emails.append(email)
-        else:
-            unknown_emails.append(email)
+    groups = group_emails_by_category(all_emails)
+    trash_emails = groups["TRASH"]
+    paper_emails = groups["PAPER"]
+    review_emails = groups["REVIEW"]
+    billing_emails = groups["BILLING"]
+    notice_emails = groups["NOTICE"]
+    exam_emails = groups["EXAM"]
+    personal_emails = groups["PERSONAL"]
+    unknown_emails = groups["UNKNOWN"]
 
     print(f"\n📊 Stage 1 分类结果:")
-    print(f"   垃圾邮件: {len(trash_emails)} 封")
-    print(f"   论文投稿: {len(paper_emails)} 封")
-    print(f"   审稿任务: {len(review_emails)} 封")
-    print(f"   账单邮件: {len(billing_emails)} 封")
-    print(f"   通知公告: {len(notice_emails)} 封")
-    print(f"   考试相关: {len(exam_emails)} 封")
-    print(f"   个人邮件: {len(personal_emails)} 封")
-    print(f"   待分析: {len(unknown_emails)} 封")
+    print_classification_stats(groups)
 
     synced_to_emails_db = 0
 
@@ -275,4 +250,6 @@ def process_week_emails():
 
 
 if __name__ == "__main__":
-    process_week_emails()
+    import sys
+    days = int(sys.argv[1]) if len(sys.argv) > 1 else 7
+    process_week_emails(days=days)

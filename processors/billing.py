@@ -6,7 +6,6 @@
 import re
 import json
 import requests
-from datetime import datetime
 from typing import Dict, List, Optional
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry

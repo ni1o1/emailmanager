@@ -19,19 +19,25 @@ class MessageResult:
 class iMessageClient:
     """iMessage 发送客户端"""
 
-    def __init__(self, recipient: str = None):
+    def __init__(self, recipient: str = None, sender: str = None):
         """
         初始化 iMessage 客户端
 
         Args:
             recipient: 收件人（手机号或 Apple ID）
                       如不指定，使用配置文件中的默认值
+            sender: 发送账号（Apple ID 邮箱）
+                   如不指定，使用配置文件中的默认值
         """
         # 延迟导入配置，避免循环依赖
         from config.settings import IMESSAGE_ENABLED, IMESSAGE_RECIPIENT
 
         self.recipient = recipient or IMESSAGE_RECIPIENT
         self.enabled = IMESSAGE_ENABLED
+
+        # 发送账号（需要在 Mac 的信息 App 中登录此账号）
+        import os
+        self.sender = sender or os.getenv("IMESSAGE_SENDER", "")
 
     def is_available(self) -> bool:
         """
@@ -79,7 +85,18 @@ class iMessageClient:
         escaped_recipient = self._escape_for_applescript(self.recipient)
 
         # AppleScript 脚本
-        applescript = f'''
+        # 如果指定了发送账号ID，使用该账号发送
+        if self.sender:
+            escaped_sender = self._escape_for_applescript(self.sender)
+            applescript = f'''
+tell application "Messages"
+    set targetService to account id "{escaped_sender}"
+    set targetBuddy to participant "{escaped_recipient}" of targetService
+    send "{escaped_message}" to targetBuddy
+end tell
+'''
+        else:
+            applescript = f'''
 tell application "Messages"
     set targetService to 1st account whose service type = iMessage
     set targetBuddy to participant "{escaped_recipient}" of targetService
