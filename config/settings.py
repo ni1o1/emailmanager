@@ -37,18 +37,9 @@ EMAIL_ACCOUNTS = [
 # 默认发送邮箱
 DEFAULT_SEND_ACCOUNT = "QQ邮箱"
 
-# 邮件签名
-EMAIL_SIGNATURE = """
---
-[NAME_REMOVED]
-[TITLE_REMOVED]
-[ORG_REMOVED]
-[ORG_EN_REMOVED]
-地址 Address: [ADDR_REMOVED]
-[ADDR_EN_REMOVED]
-手机 Mobile: [PHONE_REMOVED]
-邮箱 Email: [EMAIL_REMOVED]
-"""
+# 邮件签名（从 .env 读取，避免敏感信息泄露到代码仓库）
+# 在 .env 中设置 EMAIL_SIGNATURE，使用 \n 分隔多行
+EMAIL_SIGNATURE = os.getenv("EMAIL_SIGNATURE", "").replace("\\n", "\n")
 
 # ============== Kimi API 配置 ==============
 
