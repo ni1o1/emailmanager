@@ -109,7 +109,7 @@ end tell
                 ["osascript", "-e", applescript],
                 capture_output=True,
                 text=True,
-                timeout=30
+                timeout=60  # 增加超时时间到60秒，首次启动Messages.app可能较慢
             )
 
             if result.returncode == 0:
@@ -119,7 +119,7 @@ end tell
                 return MessageResult(success=False, error=error_msg)
 
         except subprocess.TimeoutExpired:
-            return MessageResult(success=False, error="发送超时")
+            return MessageResult(success=False, error="发送超时（60秒）")
         except Exception as e:
             return MessageResult(success=False, error=str(e))
 

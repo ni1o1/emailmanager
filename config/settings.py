@@ -75,6 +75,14 @@ DAILY_REPORT_TIME = os.getenv("DAILY_REPORT_TIME", "14:00")
 
 STATE_DB_PATH = "state.db"
 
+# ============== 邮件处理行为 ==============
+
+# 是否自动将垃圾邮件标记为已读（默认开启）
+MARK_TRASH_AS_READ = os.getenv("MARK_TRASH_AS_READ", "true").lower() == "true"
+
+# 新邮件处理的最大回溯天数（防止数据库丢失后重复处理大量邮件）
+MAX_EMAIL_AGE_DAYS = int(os.getenv("MAX_EMAIL_AGE_DAYS", "3"))
+
 # ============== iMessage 通知配置 ==============
 
 # 是否启用 iMessage 通知

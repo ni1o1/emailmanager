@@ -15,6 +15,8 @@ from config.settings import (
     IMESSAGE_ENABLED,
     IMESSAGE_NOTIFY_LEVEL,
     IMESSAGE_QUIET_HOURS,
+    MARK_TRASH_AS_READ,
+    MAX_EMAIL_AGE_DAYS,
 )
 from core.email_client import EmailClient
 from core.notion_client import NotionClient
@@ -187,9 +189,11 @@ class EmailWatcher:
             message = self.formatter.format_email_summary(stats)
 
         if message:
-            result = self.imessage.send_silent(message)
-            if result:
-                print("   📱 已发送 iMessage 通知")
+            send_result = self.imessage.send(message)
+            if send_result.success:
+                logger.info("📱 已发送 iMessage 通知")
+            else:
+                logger.warning(f"📱 iMessage 发送失败: {send_result.error}")
 
     def check_and_process(self) -> Dict:
         """
@@ -202,9 +206,12 @@ class EmailWatcher:
         logger.info(f"检查新邮件 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
         logger.info('='*50)
 
-        # 1. 获取未读邮件
-        logger.info("获取未读邮件...")
-        all_unread = self.email_client.fetch_unread_emails(limit=MAX_EMAILS_PER_BATCH)
+        # 1. 获取未读邮件（限制最大回溯天数，防止数据库丢失后重复处理大量邮件）
+        logger.info(f"获取未读邮件（最近 {MAX_EMAIL_AGE_DAYS} 天）...")
+        all_unread = self.email_client.fetch_unread_emails(
+            limit=MAX_EMAILS_PER_BATCH,
+            max_age_days=MAX_EMAIL_AGE_DAYS
+        )
         logger.info(f"找到 {len(all_unread)} 封未读邮件")
 
         if not all_unread:
@@ -240,14 +247,16 @@ class EmailWatcher:
         # 记录垃圾邮件（不同步到Notion）
         for email in trash_emails:
             metrics.record_email("TRASH")
+            should_mark_read = MARK_TRASH_AS_READ
             self.state.mark_processed(
                 message_id=email.get("message_id"),
                 account=email.get("account"),
                 subject=email.get("subject"),
                 stage1_result="TRASH",
-                marked_read=True
+                marked_read=should_mark_read
             )
-            self.email_client.mark_as_read(email["account"], email["email_id"])
+            if should_mark_read:
+                self.email_client.mark_as_read(email["account"], email["email_id"])
 
         synced_to_emails_db = 0
 
@@ -314,9 +323,8 @@ class EmailWatcher:
                     stage1_result=email.get("_stage1_category", "UNKNOWN"),
                     stage2_category=item_category or final_category,
                     synced=not is_trash,
-                    marked_read=True
+                    marked_read=False
                 )
-                self.email_client.mark_as_read(email["account"], email["email_id"])
 
         # 5. 处理账单邮件
         if billing_emails:
@@ -343,9 +351,8 @@ class EmailWatcher:
                     subject=email.get("subject"),
                     stage1_result="BILLING",
                     synced=True,
-                    marked_read=True
+                    marked_read=False
                 )
-                self.email_client.mark_as_read(email["account"], email["email_id"])
 
         # 6. 处理通知公告邮件（需要Stage 2分析重要程度）
         if notice_emails:
@@ -371,9 +378,8 @@ class EmailWatcher:
                     subject=email.get("subject"),
                     stage1_result="NOTICE",
                     synced=True,
-                    marked_read=True
+                    marked_read=False
                 )
-                self.email_client.mark_as_read(email["account"], email["email_id"])
 
         # 7. 处理考试相关邮件（用Stage 2分析）
         if exam_emails:
@@ -397,9 +403,8 @@ class EmailWatcher:
                     subject=email.get("subject"),
                     stage1_result="EXAM",
                     synced=True,
-                    marked_read=True
+                    marked_read=False
                 )
-                self.email_client.mark_as_read(email["account"], email["email_id"])
 
         # 8. 处理个人邮件（用Stage 2分析）
         if personal_emails:
@@ -422,9 +427,8 @@ class EmailWatcher:
                     subject=email.get("subject"),
                     stage1_result="PERSONAL",
                     synced=True,
-                    marked_read=True
+                    marked_read=False
                 )
-            self.email_client.mark_as_read(email["account"], email["email_id"])
 
         if synced_to_emails_db > 0:
             logger.info(f"同步到邮件整理: {synced_to_emails_db} 封")

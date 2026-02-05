@@ -413,12 +413,18 @@ class NotionClient:
             }
         }
 
-        # 解析日期
-        if date_str:
+        # 解析日期 - 优先使用 email 中的 datetime 对象
+        email_date = email.get("date")  # datetime 对象
+        if email_date:
+            try:
+                page_data["properties"]["日期"] = {"date": {"start": email_date.strftime("%Y-%m-%d")}}
+            except:
+                pass
+        elif date_str:
             try:
                 from datetime import datetime
                 # 尝试多种日期格式
-                for fmt in ["%Y-%m-%d %H:%M:%S", "%a, %d %b %Y %H:%M:%S %z", "%Y-%m-%d"]:
+                for fmt in ["%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%a, %d %b %Y %H:%M:%S %z", "%Y-%m-%d"]:
                     try:
                         dt = datetime.strptime(date_str.split(" +")[0].split(" -")[0].strip(), fmt)
                         page_data["properties"]["日期"] = {"date": {"start": dt.strftime("%Y-%m-%d")}}

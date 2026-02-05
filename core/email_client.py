@@ -84,20 +84,28 @@ class EmailClient:
                 pass
         return body.strip()[:max_length]
 
-    def fetch_unread_emails(self, account_name: str = None, limit: int = 50) -> List[Dict]:
+    def fetch_unread_emails(self, account_name: str = None, limit: int = 50, max_age_days: int = None) -> List[Dict]:
         """获取未读邮件
 
         Args:
             account_name: 指定账户名，None则获取所有账户
             limit: 每个账户最多获取的邮件数
+            max_age_days: 只获取最近N天的邮件，None则不限制
 
         Returns:
             邮件列表，每个邮件包含基础信息
         """
+        from datetime import timedelta
+
         all_emails = []
         accounts = self.accounts if account_name is None else [
             a for a in self.accounts if a["name"] == account_name
         ]
+
+        # 计算日期过滤条件
+        since_date = None
+        if max_age_days:
+            since_date = (datetime.now() - timedelta(days=max_age_days)).strftime("%d-%b-%Y")
 
         for account in accounts:
             try:
@@ -105,8 +113,11 @@ class EmailClient:
                 conn.login(account["address"], account["password"])
                 conn.select("INBOX")
 
-                # 只获取未读邮件
-                status, messages = conn.search(None, "UNSEEN")
+                # 只获取未读邮件（可选日期过滤）
+                if since_date:
+                    status, messages = conn.search(None, f'(UNSEEN SINCE {since_date})')
+                else:
+                    status, messages = conn.search(None, "UNSEEN")
                 if status != "OK":
                     continue
 
