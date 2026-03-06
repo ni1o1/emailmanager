@@ -1,0 +1,10 @@
+services:
+  emailmanager:
+    build: .
+    container_name: emailmanager
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./state.db:/app/state.db
+      - ./logs:/app/logs

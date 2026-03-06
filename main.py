@@ -8,11 +8,12 @@
     python main.py --stats      # 查看统计信息
 """
 
+import os
 import sys
 import argparse
 
 # 添加项目根目录到路径
-sys.path.insert(0, '/Users/yuqing/emailmanager')
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from core.logger import get_logger, setup_logging
 from core.validator import require_valid_config

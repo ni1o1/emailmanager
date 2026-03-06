@@ -83,17 +83,19 @@ MARK_TRASH_AS_READ = os.getenv("MARK_TRASH_AS_READ", "true").lower() == "true"
 # 新邮件处理的最大回溯天数（防止数据库丢失后重复处理大量邮件）
 MAX_EMAIL_AGE_DAYS = int(os.getenv("MAX_EMAIL_AGE_DAYS", "3"))
 
-# ============== iMessage 通知配置 ==============
+# ============== Telegram 通知配置 ==============
 
-# 是否启用 iMessage 通知
-IMESSAGE_ENABLED = os.getenv("IMESSAGE_ENABLED", "false").lower() == "true"
+# 是否启用 Telegram 通知
+TELEGRAM_ENABLED = os.getenv("TELEGRAM_ENABLED", "false").lower() == "true"
 
-# iMessage 收件人（手机号或 Apple ID）
-# 格式：+86xxxxxxxxxxx 或 email@icloud.com
-IMESSAGE_RECIPIENT = os.getenv("IMESSAGE_RECIPIENT", "")
+# Telegram Bot Token
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+
+# Telegram Chat ID
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # 通知级别：all（所有处理完成都通知）/ important（仅重要邮件）/ summary（仅摘要）
-IMESSAGE_NOTIFY_LEVEL = os.getenv("IMESSAGE_NOTIFY_LEVEL", "summary")
+TELEGRAM_NOTIFY_LEVEL = os.getenv("TELEGRAM_NOTIFY_LEVEL", "all")
 
 # 静默时段（不发送通知）- 格式：HH:MM-HH:MM
-IMESSAGE_QUIET_HOURS = os.getenv("IMESSAGE_QUIET_HOURS", "23:00-07:00")
+TELEGRAM_QUIET_HOURS = os.getenv("TELEGRAM_QUIET_HOURS", "")

@@ -4,7 +4,7 @@
 """
 
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Set
 
 from config.settings import STATE_DB_PATH
@@ -114,26 +114,34 @@ class StateManager:
         conn.close()
 
     def get_stats(self, days: int = 7) -> dict:
-        """获取统计信息"""
+        """获取统计信息，按最近 days 天过滤（使用本地时间）"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
 
-        cursor.execute("SELECT COUNT(*) FROM processed_emails")
+        # 用 Python 计算本地时间起点，避免 SQLite datetime('now') 返回 UTC 的问题
+        since = (datetime.now() - timedelta(days=days)).isoformat()
+
+        cursor.execute(
+            "SELECT COUNT(*) FROM processed_emails WHERE processed_at >= ?",
+            (since,),
+        )
         total = cursor.fetchone()[0]
 
         cursor.execute("""
             SELECT stage1_result, COUNT(*)
             FROM processed_emails
+            WHERE processed_at >= ?
             GROUP BY stage1_result
-        """)
+        """, (since,))
         by_stage1 = dict(cursor.fetchall())
 
         cursor.execute("""
             SELECT stage2_category, COUNT(*)
             FROM processed_emails
             WHERE stage2_category IS NOT NULL
+            AND processed_at >= ?
             GROUP BY stage2_category
-        """)
+        """, (since,))
         by_category = dict(cursor.fetchall())
 
         conn.close()

@@ -12,9 +12,9 @@ from config.settings import (
     CHECK_INTERVAL,
     MAX_EMAILS_PER_BATCH,
     DAILY_REPORT_TIME,
-    IMESSAGE_ENABLED,
-    IMESSAGE_NOTIFY_LEVEL,
-    IMESSAGE_QUIET_HOURS,
+    TELEGRAM_ENABLED,
+    TELEGRAM_NOTIFY_LEVEL,
+    TELEGRAM_QUIET_HOURS,
     MARK_TRASH_AS_READ,
     MAX_EMAIL_AGE_DAYS,
 )
@@ -22,7 +22,7 @@ from core.email_client import EmailClient
 from core.notion_client import NotionClient
 from core.state import StateManager
 from core.billing_db import BillingDB
-from core.imessage import iMessageClient
+from core.telegram import TelegramClient
 from core.message_formatter import MessageFormatter
 from core.logger import get_logger, LogContext
 from core.metrics import metrics
@@ -59,8 +59,8 @@ class EmailWatcher:
         self.academic_processor = AcademicProcessor(self.notion)
         self.billing_processor = BillingProcessor(self.billing_db, self.notion)
 
-        # iMessage 通知
-        self.imessage = iMessageClient()
+        # Telegram 通知
+        self.telegram = TelegramClient()
         self.formatter = MessageFormatter()
 
         # 记录上次发送每日简报的日期
@@ -68,15 +68,17 @@ class EmailWatcher:
 
     def _send_startup_notification(self):
         """发送启动通知"""
-        if not IMESSAGE_ENABLED:
+        if not TELEGRAM_ENABLED:
             return
 
         now = datetime.now()
         message = f"📧 邮件监控已启动\n{now.strftime('%Y-%m-%d %H:%M')}\n\n每10分钟检查新邮件\n每天14:00发送统计简报"
 
-        result = self.imessage.send_silent(message)
-        if result:
-            print("   📱 已发送启动通知")
+        result = self.telegram.send(message)
+        if result.success:
+            logger.info("📱 已发送启动通知")
+        else:
+            logger.warning(f"📱 启动通知发送失败: {result.error}")
 
     def _should_send_daily_report(self) -> bool:
         """检查是否应该发送每日简报"""
@@ -96,7 +98,7 @@ class EmailWatcher:
 
     def _send_daily_report(self):
         """发送每日统计简报"""
-        if not IMESSAGE_ENABLED:
+        if not TELEGRAM_ENABLED:
             return
 
         today = date.today()
@@ -133,18 +135,21 @@ class EmailWatcher:
 
         message = "\n".join(lines)
 
-        result = self.imessage.send_silent(message)
-        if result:
-            print("   📱 已发送每日简报")
+        result = self.telegram.send(message)
+        if result.success:
+            logger.info("📱 已发送每日简报")
             self._last_daily_report_date = today
+        else:
+            logger.warning(f"📱 每日简报发送失败: {result.error}")
+            # 发送失败不设置 _last_daily_report_date，下次检查时会重试
 
     def _is_quiet_hours(self) -> bool:
         """检查是否在静默时段"""
-        if not IMESSAGE_QUIET_HOURS:
+        if not TELEGRAM_QUIET_HOURS:
             return False
 
         try:
-            start_str, end_str = IMESSAGE_QUIET_HOURS.split("-")
+            start_str, end_str = TELEGRAM_QUIET_HOURS.split("-")
             now = datetime.now().time()
             start = datetime.strptime(start_str, "%H:%M").time()
             end = datetime.strptime(end_str, "%H:%M").time()
@@ -158,7 +163,7 @@ class EmailWatcher:
 
     def _should_notify(self, stats: Dict, important_emails: List[Dict]) -> bool:
         """判断是否应该发送通知"""
-        if not IMESSAGE_ENABLED:
+        if not TELEGRAM_ENABLED:
             return False
 
         if self._is_quiet_hours():
@@ -167,7 +172,7 @@ class EmailWatcher:
         if stats.get("new", 0) == 0:
             return False
 
-        if IMESSAGE_NOTIFY_LEVEL == "important":
+        if TELEGRAM_NOTIFY_LEVEL == "important":
             return len(important_emails) > 0
 
         return True  # "all" 或 "summary"
@@ -183,17 +188,17 @@ class EmailWatcher:
         # 优先使用新邮件摘要格式（显示每封邮件的摘要）
         if all_new_emails:
             message = self.formatter.format_new_emails_digest(all_new_emails)
-        elif IMESSAGE_NOTIFY_LEVEL == "important" and important_emails:
+        elif TELEGRAM_NOTIFY_LEVEL == "important" and important_emails:
             message = self.formatter.format_important_alert(important_emails)
         else:
             message = self.formatter.format_email_summary(stats)
 
         if message:
-            send_result = self.imessage.send(message)
+            send_result = self.telegram.send(message)
             if send_result.success:
-                logger.info("📱 已发送 iMessage 通知")
+                logger.info("📱 已发送 Telegram 通知")
             else:
-                logger.warning(f"📱 iMessage 发送失败: {send_result.error}")
+                logger.warning(f"📱 Telegram 发送失败: {send_result.error}")
 
     def check_and_process(self) -> Dict:
         """
@@ -455,7 +460,7 @@ class EmailWatcher:
             "unknown": len(unknown_emails),
         }
 
-        # 发送 iMessage 通知（传入所有新邮件以显示摘要）
+        # 发送 Telegram 通知（传入所有新邮件以显示摘要）
         self._send_notification(stats, important_emails, new_emails)
 
         logger.info(f"处理完成: 新邮件 {len(new_emails)} 封, 垃圾 {len(trash_emails)} 封")
@@ -490,9 +495,9 @@ class EmailWatcher:
                 except Exception as e:
                     logger.error(f"处理出错: {e}", exc_info=True)
                     # 发送错误通知（可选）
-                    if IMESSAGE_ENABLED and not self._is_quiet_hours():
+                    if TELEGRAM_ENABLED and not self._is_quiet_hours():
                         error_msg = self.formatter.format_error_alert(str(e), "邮件处理")
-                        self.imessage.send_silent(error_msg)
+                        self.telegram.send_silent(error_msg)
 
                 logger.debug(f"下次检查: {interval}秒后...")
                 time.sleep(interval)

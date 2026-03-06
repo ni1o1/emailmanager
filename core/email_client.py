@@ -7,6 +7,7 @@ import imaplib
 import smtplib
 import email
 import re
+import socket
 from email.message import Message
 from email.header import decode_header
 from email.utils import parsedate_to_datetime
@@ -17,12 +18,26 @@ from typing import Optional, List, Dict
 
 from config.settings import EMAIL_ACCOUNTS, EMAIL_SIGNATURE
 
+# IMAP 操作超时（秒）
+IMAP_TIMEOUT = 60
+
 
 class EmailClient:
     """邮件客户端"""
 
     def __init__(self):
         self.accounts = EMAIL_ACCOUNTS
+
+    @staticmethod
+    def _connect_imap(host: str, port: int):
+        """创建 IMAP4_SSL 连接（兼容 Python 3.8，不支持 timeout 参数）"""
+        old_timeout = socket.getdefaulttimeout()
+        try:
+            socket.setdefaulttimeout(IMAP_TIMEOUT)
+            conn = imaplib.IMAP4_SSL(host, port)
+        finally:
+            socket.setdefaulttimeout(old_timeout)
+        return conn
 
     @staticmethod
     def _decode_header(header_value: Optional[str]) -> str:
@@ -109,7 +124,7 @@ class EmailClient:
 
         for account in accounts:
             try:
-                conn = imaplib.IMAP4_SSL(account["imap_host"], account["imap_port"])
+                conn = self._connect_imap(account["imap_host"], account["imap_port"])
                 conn.login(account["address"], account["password"])
                 conn.select("INBOX")
 
@@ -165,6 +180,8 @@ class EmailClient:
                         continue
 
                 conn.logout()
+            except (socket.timeout, imaplib.IMAP4.abort, OSError) as e:
+                print(f"   ⚠️ 获取 {account['name']} 邮件超时: {e}")
             except Exception as e:
                 print(f"   ⚠️ 获取 {account['name']} 邮件失败: {e}")
 
@@ -193,7 +210,7 @@ class EmailClient:
             return False
 
         try:
-            conn = imaplib.IMAP4_SSL(account["imap_host"], account["imap_port"])
+            conn = self._connect_imap(account["imap_host"], account["imap_port"])
             conn.login(account["address"], account["password"])
             conn.select("INBOX")
             conn.store(email_id, '+FLAGS', '\\Seen')
@@ -220,7 +237,7 @@ class EmailClient:
 
         for account in self.accounts:
             try:
-                conn = imaplib.IMAP4_SSL(account["imap_host"], account["imap_port"])
+                conn = self._connect_imap(account["imap_host"], account["imap_port"])
                 conn.login(account["address"], account["password"])
                 conn.select("INBOX")
 
@@ -273,6 +290,8 @@ class EmailClient:
                         continue
 
                 conn.logout()
+            except (socket.timeout, imaplib.IMAP4.abort, OSError) as e:
+                print(f"   ⚠️ 获取 {account['name']} 邮件超时: {e}")
             except Exception as e:
                 print(f"   ⚠️ 获取 {account['name']} 邮件失败: {e}")
 
