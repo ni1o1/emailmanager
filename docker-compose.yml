@@ -5,6 +5,17 @@ services:
     restart: unless-stopped
     env_file:
       - .env
+    environment:
+      - TELEGRAM_PROXY=http://mihomo:7890
+      - TZ=Asia/Shanghai
     volumes:
       - ./state.db:/app/state.db
       - ./logs:/app/logs
+    networks:
+      - default
+      - mihomo_net
+
+networks:
+  mihomo_net:
+    external: true
+    name: clash_default

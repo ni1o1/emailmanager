@@ -186,7 +186,10 @@ class EmailClient:
                 print(f"   ⚠️ 获取 {account['name']} 邮件失败: {e}")
 
         # 按日期排序
-        all_emails.sort(key=lambda x: x["date"] or datetime.min, reverse=True)
+        all_emails.sort(
+            key=lambda x: (x["date"].replace(tzinfo=None) if x["date"] else datetime.min),
+            reverse=True,
+        )
         return all_emails
 
     def load_email_body(self, email_item: Dict) -> str:
@@ -296,7 +299,10 @@ class EmailClient:
                 print(f"   ⚠️ 获取 {account['name']} 邮件失败: {e}")
 
         # 按日期排序
-        all_emails.sort(key=lambda x: x["date"] or datetime.min, reverse=True)
+        all_emails.sort(
+            key=lambda x: (x["date"].replace(tzinfo=None) if x["date"] else datetime.min),
+            reverse=True,
+        )
         return all_emails
 
     def send_email(self, to_addr: str, subject: str, body: str,

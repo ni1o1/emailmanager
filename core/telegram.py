@@ -26,6 +26,11 @@ class TelegramClient:
         self.enabled = TELEGRAM_ENABLED
         self.api_base = f"https://api.telegram.org/bot{self.token}"
 
+        # 代理设置（从环境变量读取）
+        import os
+        proxy = os.getenv("TELEGRAM_PROXY", "")
+        self.proxies = {"https": proxy, "http": proxy} if proxy else None
+
     def send(self, message: str) -> MessageResult:
         """发送 Telegram 消息"""
         if not self.enabled:
@@ -42,6 +47,7 @@ class TelegramClient:
                 f"{self.api_base}/sendMessage",
                 json={"chat_id": self.chat_id, "text": message},
                 timeout=30,
+                proxies=self.proxies,
             )
             data = resp.json()
             if data.get("ok"):
