@@ -58,7 +58,8 @@ KIMI_MODEL = os.getenv("KIMI_MODEL", "kimi-k2.5")
 KIMI_TIMEOUT = int(os.getenv("KIMI_TIMEOUT", "120"))  # 秒
 
 # LLM Thinking Budget（扩展思考 token 数，0 表示不启用）
-LLM_THINKING_BUDGET = int(os.getenv("LLM_THINKING_BUDGET", "4096"))
+# 注意：需要 API 支持 thinking 参数，Kimi k2.5 默认关闭
+LLM_THINKING_BUDGET = int(os.getenv("LLM_THINKING_BUDGET", "0"))
 
 # ============== 定时任务配置 ==============
 
