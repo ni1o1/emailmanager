@@ -4,7 +4,6 @@ Stage 1: LLM分析标题+发件人判断分类
 Stage 2: 如果标题无法判断，LLM分析邮件内容
 """
 
-import os
 import re
 import json
 import time
@@ -93,11 +92,6 @@ class EmailClassifier:
         retry = Retry(total=2, backoff_factor=1, status_forcelist=[500, 502, 503, 504])
         adapter = HTTPAdapter(max_retries=retry)
         self.session.mount("https://", adapter)
-
-        # 配置代理（NAS Docker 环境需要通过代理访问外网）
-        proxy = os.getenv("TELEGRAM_PROXY", "")
-        if proxy:
-            self.session.proxies = {"http": proxy, "https": proxy}
 
     def _call_llm(self, system_prompt: str, user_prompt: str, timeout: int = None, max_retries: int = 3) -> str:
         """
