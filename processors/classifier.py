@@ -201,7 +201,7 @@ class EmailClassifier:
         max_parse_retries = 2
         for parse_attempt in range(max_parse_retries):
             try:
-                content = self._call_llm(system_prompt, user_prompt, timeout=60)
+                content = self._call_llm(system_prompt, user_prompt, timeout=120)
                 results = extract_json_from_text(content, expect_array=True)
                 if results and isinstance(results, list):
                     result_map = {r["id"]: r["category"].upper() for r in results if "id" in r and "category" in r}
@@ -268,7 +268,7 @@ class EmailClassifier:
         max_parse_retries = 2
         for parse_attempt in range(max_parse_retries):
             try:
-                content = self._call_llm(system_prompt, user_prompt, timeout=60)
+                content = self._call_llm(system_prompt, user_prompt, timeout=120)
                 result = extract_json_from_text(content, expect_array=False)
                 if result and isinstance(result, dict):
                     cls = result.get("classification", {})
