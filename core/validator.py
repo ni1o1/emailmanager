@@ -33,6 +33,7 @@ class ConfigValidator:
     EMAIL_ACCOUNT_PAIRS = [
         ("QQ_EMAIL_ADDRESS", "QQ_EMAIL_PASSWORD", "QQ邮箱"),
         ("PKU_EMAIL_ADDRESS", "PKU_EMAIL_PASSWORD", "PKU邮箱"),
+        ("GMAIL_ADDRESS", "GMAIL_PASSWORD", "Gmail"),
     ]
 
     # 可选但建议配置的项

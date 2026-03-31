@@ -32,6 +32,15 @@ EMAIL_ACCOUNTS = [
         "smtp_host": "mail.pku.edu.cn",
         "smtp_port": 465,
     },
+    {
+        "name": "Gmail",
+        "address": os.getenv("GMAIL_ADDRESS", ""),
+        "password": os.getenv("GMAIL_PASSWORD", ""),
+        "imap_host": "imap.gmail.com",
+        "imap_port": 993,
+        "smtp_host": "smtp.gmail.com",
+        "smtp_port": 465,
+    },
 ]
 
 # 默认发送邮箱
