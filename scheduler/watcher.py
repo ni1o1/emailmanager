@@ -19,16 +19,13 @@ from config.settings import (
     MAX_EMAIL_AGE_DAYS,
 )
 from core.email_client import EmailClient
-from core.notion_client import NotionClient
 from core.state import StateManager
-from core.billing_db import BillingDB
 from core.telegram import TelegramClient
 from core.message_formatter import MessageFormatter
 from core.logger import get_logger, LogContext
 from core.metrics import metrics
 from processors.classifier import EmailClassifier
 from processors.academic import AcademicProcessor
-from processors.billing import BillingProcessor
 from processors.email_processor import (
     group_emails_by_category,
     print_classification_stats,
@@ -52,12 +49,9 @@ class EmailWatcher:
 
     def __init__(self):
         self.email_client = EmailClient()
-        self.notion = NotionClient()
         self.state = StateManager()
-        self.billing_db = BillingDB()
         self.classifier = EmailClassifier()
-        self.academic_processor = AcademicProcessor(self.notion)
-        self.billing_processor = BillingProcessor(self.billing_db, self.notion)
+        self.academic_processor = AcademicProcessor()
 
         # Telegram 通知
         self.telegram = TelegramClient()
@@ -65,6 +59,23 @@ class EmailWatcher:
 
         # 记录上次发送每日简报的日期
         self._last_daily_report_date = None
+
+    @staticmethod
+    def _is_zero_amount_bill(summary: str, subject: str) -> bool:
+        """检测是否为0元账单"""
+        import re
+        text = summary + " " + subject
+        # 匹配 ¥0、¥0.00、0元、0.00元、$0、$0.00 等
+        zero_patterns = [
+            r'[¥￥]\s*0(\.0+)?(?!\d)',
+            r'\$\s*0(\.0+)?(?!\d)',
+            r'0(\.0+)?\s*元',
+            r'金额[为是：:]\s*0',
+        ]
+        for pattern in zero_patterns:
+            if re.search(pattern, text):
+                return True
+        return False
 
     def _send_startup_notification(self):
         """发送启动通知"""
@@ -249,7 +260,7 @@ class EmailWatcher:
 
         print_classification_stats(groups)
 
-        # 记录垃圾邮件（不同步到Notion）
+        # 记录垃圾邮件
         for email in trash_emails:
             metrics.record_email("TRASH")
             should_mark_read = MARK_TRASH_AS_READ
@@ -263,12 +274,9 @@ class EmailWatcher:
             if should_mark_read:
                 self.email_client.mark_as_read(email["account"], email["email_id"])
 
-        synced_to_emails_db = 0
-
         # 4. 处理需要Stage 2分析的邮件（论文 + 审稿 + unknown）
         need_stage2 = paper_emails + review_emails + unknown_emails
         if need_stage2:
-            # 加载邮件正文
             logger.info("加载邮件内容...")
             for email in need_stage2:
                 self.email_client.load_email_body(email)
@@ -281,45 +289,25 @@ class EmailWatcher:
 
             logger.info(f"识别到 {len(items)} 个学术项目")
 
-            # 统计分类结果
             class_map = {c["id"]: c for c in classifications}
             trash_count = sum(1 for c in classifications if "Trash" in c.get("category", ""))
             if trash_count:
                 logger.info(f"LLM判定垃圾: {trash_count} 封")
 
             if items:
-                logger.info("同步学术项目到 Notion...")
                 result = self.academic_processor.process(items)
                 logger.info(f"论文: {result['papers_synced']} 条, 审稿: {result['reviews_synced']} 条")
 
-            # 记录处理状态
             for i, email in enumerate(need_stage2, 1):
                 cls_info = class_map.get(i, {})
                 final_category = cls_info.get("category", email.get("_final_category", "Unknown"))
-                importance = email.get("_importance", 2)
-                needs_action = email.get("_needs_action", False)
-                summary = email.get("_summary", "")[:20]
-                venue = email.get("_venue", "")
-
-                # 找到对应的item获取venue
                 item_category = None
                 for item in items:
                     if i in item.get("source_emails", []):
                         item_category = item.get("category")
-                        if not venue:
-                            venue = item.get("venue", "")
+                        if not email.get("_venue"):
+                            email["_venue"] = item.get("venue", "")
                         break
-
-                # 判断是否需要同步到邮件整理
-                is_trash = "Trash" in (final_category or "")
-                is_paper = "Paper" in (final_category or "") or "Paper" in (item_category or "")
-                is_review = "Review" in (final_category or "") or "Review" in (item_category or "")
-
-                # 非垃圾的论文/审稿邮件同步到邮件整理
-                if not is_trash and (is_paper or is_review or needs_action):
-                    email_category = "审稿" if is_review else "学术"
-                    if self.notion.sync_email(email, email_category, importance, needs_action, summary, venue):
-                        synced_to_emails_db += 1
 
                 self.state.mark_processed(
                     message_id=email.get("message_id"),
@@ -327,62 +315,49 @@ class EmailWatcher:
                     subject=email.get("subject"),
                     stage1_result=email.get("_stage1_category", "UNKNOWN"),
                     stage2_category=item_category or final_category,
-                    synced=not is_trash,
+                    synced=False,
                     marked_read=False
                 )
 
-        # 5. 处理账单邮件
+        # 5. 处理账单邮件（Stage 2 分析获取摘要和金额）
         if billing_emails:
             logger.info("分析账单邮件...")
-            # 加载正文
             for email in billing_emails:
                 self.email_client.load_email_body(email)
 
-            billing_items = self.billing_processor.parse_billing_emails(billing_emails)
+            self.classifier.stage2_analyze_content(billing_emails)
 
-            if billing_items:
-                logger.info(f"识别到 {len(billing_items)} 个账单项目")
-                result = self.billing_processor.process(billing_items)
-                logger.info(f"新条目: {result['new_items']}, 更新记录: {result['updated_records']}, 同步Notion: {result['synced_to_notion']}")
-
-            # 同步账单邮件到邮件整理（账单不需要处理，只是记录）
             for email in billing_emails:
-                if self.notion.sync_email(email, "账单", importance=2, needs_action=False):
-                    synced_to_emails_db += 1
+                # 0 元账单不推送
+                summary = email.get("_summary", "")
+                if self._is_zero_amount_bill(summary, email.get("subject", "")):
+                    email["_suppress_notification"] = True
+                    logger.info(f"跳过0元账单: {email.get('subject', '')[:50]}")
 
                 self.state.mark_processed(
                     message_id=email.get("message_id"),
                     account=email.get("account"),
                     subject=email.get("subject"),
                     stage1_result="BILLING",
-                    synced=True,
+                    synced=False,
                     marked_read=False
                 )
 
-        # 6. 处理通知公告邮件（需要Stage 2分析重要程度）
+        # 6. 处理通知公告邮件（Stage 2 分析重要程度，只推送重要的）
         if notice_emails:
             logger.info("分析通知邮件...")
             for email in notice_emails:
                 self.email_client.load_email_body(email)
 
-            # 用Stage 2分析通知邮件的重要程度
-            notice_analysis = self.classifier.stage2_analyze_content(notice_emails)
-            notice_class_map = {c["id"]: c for c in notice_analysis.get("classifications", [])}
+            self.classifier.stage2_analyze_content(notice_emails)
 
-            for i, email in enumerate(notice_emails, 1):
-                importance = email.get("_importance", 2)
-                needs_action = email.get("_needs_action", False)
-                summary = email.get("_summary", "")[:20]  # 增加到20字符
-
-                if self.notion.sync_email(email, "通知", importance, needs_action, summary):
-                    synced_to_emails_db += 1
-
+            for email in notice_emails:
                 self.state.mark_processed(
                     message_id=email.get("message_id"),
                     account=email.get("account"),
                     subject=email.get("subject"),
                     stage1_result="NOTICE",
-                    synced=True,
+                    synced=False,
                     marked_read=False
                 )
 
@@ -395,19 +370,17 @@ class EmailWatcher:
             self.classifier.stage2_analyze_content(exam_emails)
 
             for email in exam_emails:
-                # 考试邮件默认高优先级
-                importance = email.get("_importance", 5)  # 考试默认5分
-                needs_action = email.get("_needs_action", True)
-                summary = email.get("_summary", "")[:20]  # 增加到20字符
-                if self.notion.sync_email(email, "考试", importance, needs_action, summary):
-                    synced_to_emails_db += 1
+                if not email.get("_importance"):
+                    email["_importance"] = 5
+                if email.get("_needs_action") is None:
+                    email["_needs_action"] = True
 
                 self.state.mark_processed(
                     message_id=email.get("message_id"),
                     account=email.get("account"),
                     subject=email.get("subject"),
                     stage1_result="EXAM",
-                    synced=True,
+                    synced=False,
                     marked_read=False
                 )
 
@@ -420,23 +393,20 @@ class EmailWatcher:
             self.classifier.stage2_analyze_content(personal_emails)
 
             for email in personal_emails:
-                importance = email.get("_importance", 3)
-                needs_action = email.get("_needs_action", False)
-                summary = email.get("_summary", "")[:20]  # 增加到20字符
-                if self.notion.sync_email(email, "个人", importance, needs_action, summary):
-                    synced_to_emails_db += 1
-
                 self.state.mark_processed(
                     message_id=email.get("message_id"),
                     account=email.get("account"),
                     subject=email.get("subject"),
                     stage1_result="PERSONAL",
-                    synced=True,
+                    synced=False,
                     marked_read=False
                 )
 
-        if synced_to_emails_db > 0:
-            logger.info(f"同步到邮件整理: {synced_to_emails_db} 封")
+        # NOTICE 类邮件：只有 importance >= 4 才推送，其余从通知列表中排除
+        for email in notice_emails:
+            importance = email.get("_importance", 2)
+            if importance < 4:
+                email["_suppress_notification"] = True
 
         # 收集重要邮件（用于通知）
         important_emails = []

@@ -48,20 +48,8 @@ KIMI_API_KEY = os.getenv("KIMI_API_KEY", "")
 KIMI_MODEL = os.getenv("KIMI_MODEL", "kimi-k2.5")
 KIMI_TIMEOUT = int(os.getenv("KIMI_TIMEOUT", "120"))  # 秒
 
-# ============== Notion 配置 ==============
-
-NOTION_API_URL = "https://api.notion.com/v1"
-NOTION_TOKEN = os.getenv("NOTION_TOKEN", "")
-NOTION_VERSION = "2022-06-28"
-
-# 数据库名称
-NOTION_DB_PAPERS = "📄 论文投稿管理"
-NOTION_DB_REVIEWS = "📝 审稿任务管理"
-NOTION_DB_EMAILS = "📬 邮件整理"
-NOTION_DB_BILLING = "💳 账单管理"
-
-# 父页面（所有数据库都放在这个页面下）
-NOTION_PARENT_PAGE_ID = os.getenv("NOTION_PARENT_PAGE_ID", "")
+# LLM Thinking Budget（扩展思考 token 数，0 表示不启用）
+LLM_THINKING_BUDGET = int(os.getenv("LLM_THINKING_BUDGET", "4096"))
 
 # ============== 定时任务配置 ==============
 

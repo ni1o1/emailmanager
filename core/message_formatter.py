@@ -74,14 +74,13 @@ class MessageFormatter:
         lines.append("")
 
         for email in emails[:5]:  # 最多显示5封
-            subject = (email.get("subject", "无标题"))[:30]
-            summary = email.get("_summary", "")[:15]
+            summary = email.get("_summary", "")
+            subject = email.get("subject", "无标题")
 
             if summary:
-                lines.append(f"• {subject}")
-                lines.append(f"  {summary}")
+                lines.append(f"• {summary}")
             else:
-                lines.append(f"• {subject}")
+                lines.append(f"• {subject[:50]}")
 
         if len(emails) > 5:
             lines.append(f"...还有 {len(emails) - 5} 封")
@@ -103,8 +102,11 @@ class MessageFormatter:
         if not emails:
             return ""
 
-        # 过滤掉垃圾邮件
-        valid_emails = [e for e in emails if e.get("_stage1_category") != "TRASH"]
+        # 过滤掉垃圾邮件和被抑制通知的邮件
+        valid_emails = [
+            e for e in emails
+            if e.get("_stage1_category") != "TRASH" and not e.get("_suppress_notification")
+        ]
 
         if not valid_emails:
             return ""
@@ -129,10 +131,10 @@ class MessageFormatter:
             category = email.get("_stage1_category", "UNKNOWN")
             icon = category_icons.get(category, "📧")
 
-            # 获取摘要，如果没有则用标题的前20字
+            # 获取摘要，如果没有则用标题
             summary = email.get("_summary", "")
             if not summary:
-                summary = (email.get("subject", "无标题"))[:20]
+                summary = (email.get("subject", "无标题"))[:50]
 
             # 重要程度标记
             importance = email.get("_importance", 2)

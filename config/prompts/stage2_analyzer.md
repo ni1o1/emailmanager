@@ -48,15 +48,19 @@
 1.  **推销周边**：关键词 "order reprints", "order copies", "buy poster", "webshop"。
 2.  **虚荣指标**：关键词 "citation alert", "new citation", "article metrics"。
 3.  **已发表后续**：标题包含 "nearing publication" 但内容是让你买东西。
+4.  **期刊邀稿**：任何期刊的投稿邀请（Special Issue Invitation, Manuscript Invitation），不论影响因子高低。
 
 ## 步骤 4：信息提取与摘要 (Extraction)
 
 * **Venue (期刊/会议)**：必须准确提取（如 IEEE TGRS, CVPR, Nature）。
-* **Summary (摘要)**：**电报风格**，严禁废话，20字以内。
-    * *Good*: "TGRS论文需大修 DDL:2/15"
-    * *Good*: "雅思准考证已出 3/2考试"
-    * *Good*: "拒绝审稿邀请 Access"
-    * *Bad*: "这是一封来自IEEE的邮件，通知您的论文..." (太啰嗦)
+* **Summary (摘要)**：**一句话概括核心信息，不超过50字。** 必须包含关键事实（什么事 + 关键细节如截止日期/金额/期刊名）。
+    * *Good*: "IEEE TGRS论文收到大修意见，截止日期2月15日"
+    * *Good*: "雅思准考证已出，3月2日北京语言大学考场"
+    * *Good*: "招商银行信用卡1月账单¥3,256.78，还款日2月18日"
+    * *Good*: "Remote Sensing审稿邀请，截止日期3月20日"
+    * *Good*: "研究生院通知：学位论文送审系统3月1日开放"
+    * *Bad*: "TGRS论文需大修 DDL:2/15" (太短，缺少上下文)
+    * *Bad*: "这是一封来自IEEE的邮件，通知您的论文..." (太啰嗦，不要复述邮件)
 
 ---
 
@@ -83,7 +87,7 @@
         "category": "分类 (PAPER/REVIEW/EXAM/BILLING/NOTICE/TRASH)",
         "importance": 1-5 (整数),
         "needs_action": true/false,
-        "summary": "20字电报式摘要",
+        "summary": "一句话摘要，不超过50字",
         "venue": "期刊名 (仅论文/审稿类填写，其他为空)"
     }
 }

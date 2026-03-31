@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Any
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
-from config.settings import KIMI_API_URL, KIMI_API_KEY, KIMI_MODEL, KIMI_TIMEOUT
+from config.settings import KIMI_API_URL, KIMI_API_KEY, KIMI_MODEL, KIMI_TIMEOUT, LLM_THINKING_BUDGET
 from config.prompts import get_stage1_prompt, get_stage2_prompt
 from core.logger import get_logger
 from core.exceptions import LLMError, ClassificationError
@@ -93,8 +93,16 @@ class EmailClassifier:
         adapter = HTTPAdapter(max_retries=retry)
         self.session.mount("https://", adapter)
 
-    def _call_llm(self, system_prompt: str, user_prompt: str, timeout: int = None) -> str:
-        """调用LLM"""
+    def _call_llm(self, system_prompt: str, user_prompt: str, timeout: int = None, max_retries: int = 3) -> str:
+        """
+        调用LLM，支持 thinking budget 和应用层重试
+
+        Args:
+            system_prompt: 系统提示
+            user_prompt: 用户提示
+            timeout: 单次请求超时时间
+            max_retries: 最大重试次数（默认3次）
+        """
         headers = {
             "Authorization": f"Bearer {KIMI_API_KEY}",
             "Content-Type": "application/json"
@@ -109,33 +117,49 @@ class EmailClassifier:
             "temperature": 1
         }
 
-        start_time = time.time()
-        try:
-            response = self.session.post(
-                KIMI_API_URL,
-                headers=headers,
-                json=data,
-                timeout=timeout or KIMI_TIMEOUT
-            )
-            response.raise_for_status()
+        # 添加 thinking budget
+        if LLM_THINKING_BUDGET > 0:
+            data["thinking"] = {
+                "type": "enabled",
+                "budget_tokens": LLM_THINKING_BUDGET
+            }
 
-            result = response.json()
-            duration = time.time() - start_time
+        last_error = None
+        for attempt in range(1, max_retries + 1):
+            start_time = time.time()
+            try:
+                response = self.session.post(
+                    KIMI_API_URL,
+                    headers=headers,
+                    json=data,
+                    timeout=timeout or KIMI_TIMEOUT
+                )
+                response.raise_for_status()
 
-            # 记录 token 使用情况
-            usage = result.get("usage", {})
-            logger.debug(f"LLM调用成功: {duration:.2f}s, tokens: {usage.get('total_tokens', 'N/A')}")
+                result = response.json()
+                duration = time.time() - start_time
 
-            return result["choices"][0]["message"]["content"]
-        except requests.Timeout:
-            duration = time.time() - start_time
-            logger.error(f"LLM调用超时: {duration:.2f}s")
-            raise LLMError("LLM调用超时", timeout=True)
-        except requests.RequestException as e:
-            duration = time.time() - start_time
-            response_code = getattr(e.response, 'status_code', None) if hasattr(e, 'response') else None
-            logger.error(f"LLM调用失败: {duration:.2f}s, 错误: {e}")
-            raise LLMError(f"LLM请求失败: {e}", response_code=response_code)
+                usage = result.get("usage", {})
+                logger.debug(f"LLM调用成功: {duration:.2f}s, tokens: {usage.get('total_tokens', 'N/A')}")
+
+                return result["choices"][0]["message"]["content"]
+            except requests.Timeout:
+                duration = time.time() - start_time
+                last_error = LLMError("LLM调用超时", timeout=True)
+                logger.warning(f"LLM调用超时 (尝试 {attempt}/{max_retries}): {duration:.2f}s")
+            except requests.RequestException as e:
+                duration = time.time() - start_time
+                response_code = getattr(e.response, 'status_code', None) if hasattr(e, 'response') else None
+                last_error = LLMError(f"LLM请求失败: {e}", response_code=response_code)
+                logger.warning(f"LLM调用失败 (尝试 {attempt}/{max_retries}): {duration:.2f}s, 错误: {e}")
+
+            if attempt < max_retries:
+                wait = 2 ** attempt  # 指数退避: 2s, 4s
+                logger.info(f"等待 {wait}s 后重试...")
+                time.sleep(wait)
+
+        logger.error(f"LLM调用在 {max_retries} 次尝试后仍然失败")
+        raise last_error
 
     def stage1_classify_batch(self, emails: List[Dict], batch_size: int = 10) -> List[Dict]:
         """Stage 1: 批量分析邮件标题"""
@@ -173,21 +197,28 @@ class EmailClassifier:
 
 返回JSON数组："""
 
-        try:
-            content = self._call_llm(system_prompt, user_prompt, timeout=60)
-            results = extract_json_from_text(content, expect_array=True)
-            if results and isinstance(results, list):
-                result_map = {r["id"]: r["category"].upper() for r in results if "id" in r and "category" in r}
-                for i, email in email_idx_map.items():
-                    email["_stage1_category"] = result_map.get(i, self.CATEGORY_UNKNOWN)
-            else:
-                logger.warning(f"Stage 1 JSON解析失败，返回内容: {content[:200]}...")
-                for email in emails:
-                    email["_stage1_category"] = self.CATEGORY_UNKNOWN
-        except Exception as e:
-            logger.error(f"Stage 1 批次分析失败: {e}", exc_info=True)
-            for email in emails:
-                email["_stage1_category"] = self.CATEGORY_UNKNOWN
+        # 带 JSON 解析重试的 Stage 1 调用
+        max_parse_retries = 2
+        for parse_attempt in range(max_parse_retries):
+            try:
+                content = self._call_llm(system_prompt, user_prompt, timeout=60)
+                results = extract_json_from_text(content, expect_array=True)
+                if results and isinstance(results, list):
+                    result_map = {r["id"]: r["category"].upper() for r in results if "id" in r and "category" in r}
+                    for i, email in email_idx_map.items():
+                        email["_stage1_category"] = result_map.get(i, self.CATEGORY_UNKNOWN)
+                    return  # 成功，退出
+                else:
+                    logger.warning(f"Stage 1 JSON解析失败 (尝试 {parse_attempt+1}/{max_parse_retries})，返回内容: {content[:200]}...")
+                    if parse_attempt < max_parse_retries - 1:
+                        continue  # 重试
+            except Exception as e:
+                logger.error(f"Stage 1 批次分析失败: {e}", exc_info=True)
+                break  # LLM 调用本身已有重试，这里不再重复
+
+        # 所有尝试都失败，标记为 UNKNOWN
+        for email in emails:
+            email["_stage1_category"] = self.CATEGORY_UNKNOWN
 
     def stage2_analyze_content(self, emails: List[Dict]) -> Dict:
         """Stage 2: 逐封分析邮件内容，提取详细信息"""
@@ -233,30 +264,34 @@ class EmailClassifier:
 
 返回JSON："""
 
-        try:
-            content = self._call_llm(system_prompt, user_prompt, timeout=60)
-            result = extract_json_from_text(content, expect_array=False)
-            if result and isinstance(result, dict):
-                # 更新邮件属性
-                cls = result.get("classification", {})
-                email["_final_category"] = cls.get("category", "Unknown")
-                email["_importance"] = cls.get("importance", 2)
-                email["_needs_action"] = cls.get("needs_action", False)
-                email["_summary"] = cls.get("summary", "")[:20]
-                email["_venue"] = cls.get("venue", "")
+        # 带 JSON 解析重试的 Stage 2 调用
+        max_parse_retries = 2
+        for parse_attempt in range(max_parse_retries):
+            try:
+                content = self._call_llm(system_prompt, user_prompt, timeout=60)
+                result = extract_json_from_text(content, expect_array=False)
+                if result and isinstance(result, dict):
+                    cls = result.get("classification", {})
+                    email["_final_category"] = cls.get("category", "Unknown")
+                    email["_importance"] = cls.get("importance", 2)
+                    email["_needs_action"] = cls.get("needs_action", False)
+                    email["_summary"] = cls.get("summary", "")
+                    email["_venue"] = cls.get("venue", "")
 
-                # 检查是否是已发表论文的垃圾邮件
-                item = result.get("item")
-                if item and item.get("is_published_spam"):
-                    email["_final_category"] = "Trash/Published"
-                    email["_importance"] = 1
-                    email["_needs_action"] = False
+                    item = result.get("item")
+                    if item and item.get("is_published_spam"):
+                        email["_final_category"] = "Trash/Published"
+                        email["_importance"] = 1
+                        email["_needs_action"] = False
 
-                return result
-            else:
-                logger.warning("Stage 2 JSON解析失败")
-        except Exception as e:
-            logger.error(f"Stage 2 分析失败: {e}", exc_info=True)
+                    return result
+                else:
+                    logger.warning(f"Stage 2 JSON解析失败 (尝试 {parse_attempt+1}/{max_parse_retries})")
+                    if parse_attempt < max_parse_retries - 1:
+                        continue
+            except Exception as e:
+                logger.error(f"Stage 2 分析失败: {e}", exc_info=True)
+                break
 
         return {}
 

@@ -27,8 +27,6 @@ class ConfigValidator:
     # 必填配置项
     REQUIRED_FIELDS = [
         ("KIMI_API_KEY", "Kimi LLM API 密钥"),
-        ("NOTION_TOKEN", "Notion API Token"),
-        ("NOTION_PARENT_PAGE_ID", "Notion 父页面 ID"),
     ]
 
     # 至少需要一个邮箱账户
@@ -91,10 +89,6 @@ class ConfigValidator:
         kimi_key = os.getenv("KIMI_API_KEY", "").strip()
         if kimi_key and len(kimi_key) < 20:
             warnings.append("KIMI_API_KEY 看起来太短，请确认是否正确")
-
-        notion_token = os.getenv("NOTION_TOKEN", "").strip()
-        if notion_token and not notion_token.startswith("secret_"):
-            warnings.append("NOTION_TOKEN 通常以 'secret_' 开头，请确认是否正确")
 
         is_valid = len(errors) == 0
 

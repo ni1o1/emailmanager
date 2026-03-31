@@ -16,8 +16,6 @@ def mock_env_vars():
     """模拟环境变量"""
     env_vars = {
         "KIMI_API_KEY": "sk-test-key-12345678901234567890",
-        "NOTION_TOKEN": "secret_test_token_12345",
-        "NOTION_PARENT_PAGE_ID": "test-page-id-12345",
         "QQ_EMAIL_ADDRESS": "test@qq.com",
         "QQ_EMAIL_PASSWORD": "test_password",
         "IMESSAGE_ENABLED": "false",
@@ -96,14 +94,3 @@ def mock_llm_response():
     return _mock_response
 
 
-@pytest.fixture
-def mock_notion_response():
-    """模拟 Notion API 响应"""
-    def _mock_response(data=None):
-        if data is None:
-            data = {"id": "test-page-id", "object": "page"}
-        return MagicMock(
-            json=lambda: data,
-            status_code=200
-        )
-    return _mock_response

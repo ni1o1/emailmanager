@@ -21,8 +21,6 @@ class TestConfigValidator:
     def test_validate_missing_kimi_api_key(self):
         """测试缺少 KIMI_API_KEY"""
         env_vars = {
-            "NOTION_TOKEN": "secret_test_token",
-            "NOTION_PARENT_PAGE_ID": "test-page-id",
             "QQ_EMAIL_ADDRESS": "test@qq.com",
             "QQ_EMAIL_PASSWORD": "password",
         }
@@ -31,25 +29,10 @@ class TestConfigValidator:
             assert result.is_valid is False
             assert any("KIMI_API_KEY" in e for e in result.errors)
 
-    def test_validate_missing_notion_token(self):
-        """测试缺少 NOTION_TOKEN"""
-        env_vars = {
-            "KIMI_API_KEY": "sk-test-key-12345678901234567890",
-            "NOTION_PARENT_PAGE_ID": "test-page-id",
-            "QQ_EMAIL_ADDRESS": "test@qq.com",
-            "QQ_EMAIL_PASSWORD": "password",
-        }
-        with patch.dict(os.environ, env_vars, clear=True):
-            result = ConfigValidator.validate()
-            assert result.is_valid is False
-            assert any("NOTION_TOKEN" in e for e in result.errors)
-
     def test_validate_no_email_account(self):
         """测试没有配置任何邮箱账户"""
         env_vars = {
             "KIMI_API_KEY": "sk-test-key-12345678901234567890",
-            "NOTION_TOKEN": "secret_test_token",
-            "NOTION_PARENT_PAGE_ID": "test-page-id",
         }
         with patch.dict(os.environ, env_vars, clear=True):
             result = ConfigValidator.validate()
@@ -60,8 +43,6 @@ class TestConfigValidator:
         """测试有邮箱地址但没有密码"""
         env_vars = {
             "KIMI_API_KEY": "sk-test-key-12345678901234567890",
-            "NOTION_TOKEN": "secret_test_token",
-            "NOTION_PARENT_PAGE_ID": "test-page-id",
             "QQ_EMAIL_ADDRESS": "test@qq.com",
         }
         with patch.dict(os.environ, env_vars, clear=True):
@@ -97,12 +78,6 @@ class TestConfigValidator:
             result = ConfigValidator.validate()
             # 应该有警告
             assert any("太短" in w for w in result.warnings)
-
-    def test_validate_notion_token_format_warning(self, mock_env_vars):
-        """测试 Notion Token 格式警告"""
-        with patch.dict(os.environ, {"NOTION_TOKEN": "not_starting_with_secret"}):
-            result = ConfigValidator.validate()
-            assert any("secret_" in w for w in result.warnings)
 
     def test_validation_result_dataclass(self):
         """测试 ValidationResult 数据类"""

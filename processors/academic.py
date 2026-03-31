@@ -5,15 +5,17 @@
 
 from typing import Dict, List
 
-from core.notion_client import NotionClient
 from config.categories import SYNC_CATEGORIES
+from core.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class AcademicProcessor:
     """学术邮件处理器"""
 
-    def __init__(self, notion: NotionClient = None):
-        self.notion = notion or NotionClient()
+    def __init__(self):
+        pass
 
     def process(self, items: List[Dict]) -> Dict:
         """
@@ -25,35 +27,32 @@ class AcademicProcessor:
         Returns:
             处理结果统计
         """
-        papers_synced = 0
-        reviews_synced = 0
+        papers_found = 0
+        reviews_found = 0
         skipped = 0
 
         for item in items:
             item_type = item.get("type")
             category = item.get("category", "")
 
-            # 只处理需要同步的分类
             if category not in SYNC_CATEGORIES:
                 skipped += 1
                 continue
 
             if item_type == "paper" and category in ["Paper/InProgress", "Paper/Journal", "Paper/Conference"]:
-                if self.notion.sync_paper(item):
-                    papers_synced += 1
-                    venue = item.get('venue', '?')[:20]
-                    title = (item.get('title') or '?')[:30]
-                    print(f"   ✓ 论文: [{venue}] {title}...")
+                papers_found += 1
+                venue = item.get('venue', '?')[:20]
+                title = (item.get('title') or '?')[:30]
+                logger.info(f"   ✓ 论文: [{venue}] {title}")
 
             elif item_type == "review" and category == "Review/Active":
-                if self.notion.sync_review(item):
-                    reviews_synced += 1
-                    deadline = item.get('deadline') or '无'
-                    venue = item.get('venue', '?')[:20]
-                    print(f"   ✓ 审稿: [DDL:{deadline}] {venue}...")
+                reviews_found += 1
+                deadline = item.get('deadline') or '无'
+                venue = item.get('venue', '?')[:20]
+                logger.info(f"   ✓ 审稿: [DDL:{deadline}] {venue}")
 
         return {
-            "papers_synced": papers_synced,
-            "reviews_synced": reviews_synced,
+            "papers_synced": papers_found,
+            "reviews_synced": reviews_found,
             "skipped": skipped,
         }
