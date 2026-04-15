@@ -11,6 +11,11 @@ class MessageFormatter:
     """消息格式化器"""
 
     @staticmethod
+    def _current_timestamp() -> str:
+        """返回统一格式的当前时间字符串"""
+        return datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    @staticmethod
     def format_email_summary(stats: Dict) -> str:
         """
         格式化邮件处理摘要
@@ -26,7 +31,7 @@ class MessageFormatter:
 
         lines = []
         lines.append("📬 邮件处理完成")
-        lines.append(f"时间: {datetime.now().strftime('%H:%M')}")
+        lines.append(f"时间: {MessageFormatter._current_timestamp()}")
         lines.append("")
 
         # 统计概要
@@ -71,6 +76,7 @@ class MessageFormatter:
 
         lines = []
         lines.append("⚠️ 重要邮件提醒")
+        lines.append(f"时间: {MessageFormatter._current_timestamp()}")
         lines.append("")
 
         for email in emails[:5]:  # 最多显示5封
@@ -113,7 +119,7 @@ class MessageFormatter:
 
         lines = []
         lines.append(f"📬 新邮件 ({len(valid_emails)}封)")
-        lines.append(f"{datetime.now().strftime('%H:%M')}")
+        lines.append(f"时间: {MessageFormatter._current_timestamp()}")
         lines.append("")
 
         # 分类图标映射
@@ -165,6 +171,7 @@ class MessageFormatter:
         """
         lines = []
         lines.append("❌ 邮件处理出错")
+        lines.append(f"时间: {MessageFormatter._current_timestamp()}")
 
         if context:
             lines.append(f"环节: {context}")
