@@ -29,7 +29,7 @@
   - 支持自定义发送账号
 
 - **多账户支持**
-  - 支持多个邮箱账户（QQ邮箱、PKU邮箱等）
+  - 支持多个邮箱账户（QQ邮箱、PKU邮箱、SZU邮箱等）
   - 统一管理和分类
 
 ## 快速开始
@@ -92,6 +92,10 @@ QQ_EMAIL_PASSWORD=your_app_password  # QQ邮箱授权码，非登录密码
 # PKU邮箱
 PKU_EMAIL_ADDRESS=your_email@pku.edu.cn
 PKU_EMAIL_PASSWORD=your_password
+
+# SZU邮箱
+SZU_EMAIL_ADDRESS=your_email@szu.edu.cn
+SZU_EMAIL_PASSWORD=your_password
 
 # ============== Kimi API ==============
 

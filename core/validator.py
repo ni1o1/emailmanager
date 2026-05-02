@@ -33,7 +33,7 @@ class ConfigValidator:
     EMAIL_ACCOUNT_PAIRS = [
         ("QQ_EMAIL_ADDRESS", "QQ_EMAIL_PASSWORD", "QQ邮箱"),
         ("PKU_EMAIL_ADDRESS", "PKU_EMAIL_PASSWORD", "PKU邮箱"),
-        ("GMAIL_ADDRESS", "GMAIL_PASSWORD", "Gmail"),
+        ("SZU_EMAIL_ADDRESS", "SZU_EMAIL_PASSWORD", "SZU邮箱"),
     ]
 
     # 可选但建议配置的项
@@ -72,7 +72,7 @@ class ConfigValidator:
                 errors.append(f"{name}已配置密码但缺少地址 ({addr_key})")
 
         if not has_email_account:
-            errors.append("至少需要配置一个邮箱账户（QQ邮箱或PKU邮箱）")
+            errors.append("至少需要配置一个邮箱账户")
 
         # 检查 iMessage 配置
         imessage_enabled = os.getenv("IMESSAGE_ENABLED", "false").lower() == "true"
@@ -85,6 +85,17 @@ class ConfigValidator:
         if quiet_hours:
             if not cls._validate_quiet_hours_format(quiet_hours):
                 warnings.append(f"静默时段格式错误: {quiet_hours}，应为 HH:MM-HH:MM")
+
+        feishu_quiet_hours = os.getenv("FEISHU_QUIET_HOURS", "").strip()
+        if feishu_quiet_hours and not cls._validate_quiet_hours_format(feishu_quiet_hours):
+            warnings.append(f"飞书静默时段格式错误: {feishu_quiet_hours}，应为 HH:MM-HH:MM")
+
+        # 检查飞书配置一致性
+        feishu_enabled = os.getenv("FEISHU_ENABLED", "false").lower() == "true"
+        if feishu_enabled:
+            for key in ("FEISHU_APP_ID", "FEISHU_APP_SECRET", "FEISHU_CHAT_ID"):
+                if not os.getenv(key, "").strip():
+                    warnings.append(f"飞书已启用但未配置 {key}")
 
         # 检查 API Key 格式（基本检查）
         kimi_key = os.getenv("KIMI_API_KEY", "").strip()

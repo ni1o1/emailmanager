@@ -28,12 +28,13 @@ class TestMessageFormatter:
     def test_format_important_alert_includes_full_date(self):
         """测试重要提醒包含完整日期时间"""
         message = MessageFormatter.format_important_alert([
-            {"_summary": "请今天内提交修回稿"},
+            {"_summary": "请今天内提交修回稿", "account": "PKU邮箱"},
         ])
 
         lines = message.splitlines()
         assert lines[0] == "⚠️ 重要邮件提醒"
         assert re.match(TIMESTAMP_PATTERN, lines[1])
+        assert lines[3] == "• [PKU邮箱] 请今天内提交修回稿"
 
     def test_format_new_emails_digest_includes_full_date(self):
         """测试新邮件摘要包含完整日期时间"""
@@ -41,6 +42,7 @@ class TestMessageFormatter:
             {
                 "_stage1_category": "NOTICE",
                 "_summary": "学院通知明天上午开会",
+                "account": "SZU邮箱",
                 "_suppress_notification": False,
             }
         ])
@@ -48,10 +50,11 @@ class TestMessageFormatter:
         lines = message.splitlines()
         assert lines[0] == "📬 新邮件 (1封)"
         assert re.match(TIMESTAMP_PATTERN, lines[1])
+        assert lines[3] == "📢 [SZU邮箱] 学院通知明天上午开会"
 
     def test_format_error_alert_includes_full_date(self):
         """测试错误提醒包含完整日期时间"""
-        message = MessageFormatter.format_error_alert("timeout", "Telegram 发送")
+        message = MessageFormatter.format_error_alert("timeout", "飞书发送")
 
         lines = message.splitlines()
         assert lines[0] == "❌ 邮件处理出错"

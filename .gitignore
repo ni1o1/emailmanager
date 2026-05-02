@@ -42,3 +42,6 @@ legacy/
 # Cache
 .cache/
 *.cache
+
+# Local notes (含敏感凭据，不入库)
+*.local.md

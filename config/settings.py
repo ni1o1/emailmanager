@@ -33,12 +33,12 @@ EMAIL_ACCOUNTS = [
         "smtp_port": 465,
     },
     {
-        "name": "Gmail",
-        "address": os.getenv("GMAIL_ADDRESS", ""),
-        "password": os.getenv("GMAIL_PASSWORD", ""),
-        "imap_host": "imap.gmail.com",
+        "name": "SZU邮箱",
+        "address": os.getenv("SZU_EMAIL_ADDRESS", ""),
+        "password": os.getenv("SZU_EMAIL_PASSWORD", ""),
+        "imap_host": "imap.szu.edu.cn",
         "imap_port": 993,
-        "smtp_host": "smtp.gmail.com",
+        "smtp_host": "smtp.szu.edu.cn",
         "smtp_port": 465,
     },
 ]
@@ -80,19 +80,20 @@ MARK_TRASH_AS_READ = os.getenv("MARK_TRASH_AS_READ", "true").lower() == "true"
 # 新邮件处理的最大回溯天数（防止数据库丢失后重复处理大量邮件）
 MAX_EMAIL_AGE_DAYS = int(os.getenv("MAX_EMAIL_AGE_DAYS", "3"))
 
-# ============== Telegram 通知配置 ==============
+# ============== 飞书通知配置 ==============
 
-# 是否启用 Telegram 通知
-TELEGRAM_ENABLED = os.getenv("TELEGRAM_ENABLED", "false").lower() == "true"
+# 是否启用飞书通知
+FEISHU_ENABLED = os.getenv("FEISHU_ENABLED", "false").lower() == "true"
 
-# Telegram Bot Token
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+# 飞书自建应用 App ID / App Secret
+FEISHU_APP_ID = os.getenv("FEISHU_APP_ID", "")
+FEISHU_APP_SECRET = os.getenv("FEISHU_APP_SECRET", "")
 
-# Telegram Chat ID
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
+# 飞书群聊 chat_id（机器人需要被加入该群）
+FEISHU_CHAT_ID = os.getenv("FEISHU_CHAT_ID", "")
 
 # 通知级别：all（所有处理完成都通知）/ important（仅重要邮件）/ summary（仅摘要）
-TELEGRAM_NOTIFY_LEVEL = os.getenv("TELEGRAM_NOTIFY_LEVEL", "all")
+FEISHU_NOTIFY_LEVEL = os.getenv("FEISHU_NOTIFY_LEVEL", "all")
 
 # 静默时段（不发送通知）- 格式：HH:MM-HH:MM
-TELEGRAM_QUIET_HOURS = os.getenv("TELEGRAM_QUIET_HOURS", "")
+FEISHU_QUIET_HOURS = os.getenv("FEISHU_QUIET_HOURS", "")

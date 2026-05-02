@@ -82,11 +82,12 @@ class MessageFormatter:
         for email in emails[:5]:  # 最多显示5封
             summary = email.get("_summary", "")
             subject = email.get("subject", "无标题")
+            account = email.get("account", "未知邮箱")
 
             if summary:
-                lines.append(f"• {summary}")
+                lines.append(f"• [{account}] {summary}")
             else:
-                lines.append(f"• {subject[:50]}")
+                lines.append(f"• [{account}] {subject[:50]}")
 
         if len(emails) > 5:
             lines.append(f"...还有 {len(emails) - 5} 封")
@@ -136,6 +137,7 @@ class MessageFormatter:
         for email in valid_emails[:10]:  # 最多显示10封
             category = email.get("_stage1_category", "UNKNOWN")
             icon = category_icons.get(category, "📧")
+            account = email.get("account", "未知邮箱")
 
             # 获取摘要，如果没有则用标题
             summary = email.get("_summary", "")
@@ -150,7 +152,7 @@ class MessageFormatter:
             if importance >= 4 or needs_action:
                 urgent = "⚡"
 
-            lines.append(f"{icon}{urgent} {summary}")
+            lines.append(f"{icon}{urgent} [{account}] {summary}")
 
         if len(valid_emails) > 10:
             lines.append(f"...还有 {len(valid_emails) - 10} 封")

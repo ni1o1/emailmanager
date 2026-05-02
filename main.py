@@ -17,15 +17,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from core.logger import get_logger, setup_logging
 from core.validator import require_valid_config
+from core.notification_manager import NotificationManager
 from scheduler.watcher import EmailWatcher
 from core.state import StateManager
 
 # 初始化日志系统
 setup_logging()
 logger = get_logger(__name__)
-
-# 验证配置
-require_valid_config()
 
 
 def main():
@@ -34,6 +32,7 @@ def main():
     parser.add_argument('--interval', '-i', type=int, default=600, help='检查间隔（秒）')
     parser.add_argument('--stats', '-s', action='store_true', help='查看统计信息')
     parser.add_argument('--cleanup', '-c', type=int, metavar='DAYS', help='清理N天前的记录')
+    parser.add_argument('--send-test', metavar='MESSAGE', help='向飞书发送测试消息')
 
     args = parser.parse_args()
 
@@ -57,6 +56,18 @@ def main():
         deleted = state.cleanup_old(args.cleanup)
         print(f"✓ 已清理 {deleted} 条旧记录")
         return
+
+    if args.send_test:
+        notifier = NotificationManager()
+        if not notifier.has_enabled_backends():
+            print("飞书通知未启用")
+            return
+
+        sent_count = notifier.send_text(args.send_test, respect_quiet_hours=False)
+        print(f"已尝试发送到 {sent_count} 个飞书通知渠道")
+        return
+
+    require_valid_config()
 
     watcher = EmailWatcher()
 
